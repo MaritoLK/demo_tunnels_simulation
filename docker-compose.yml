@@ -1,0 +1,11 @@
+services:
+
+  flask:
+    build: ./api
+    port:
+  react:
+    build: ./client
+  
+  postgressSQL:
+    image: postgres:18
+  
