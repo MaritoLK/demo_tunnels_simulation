@@ -1,5 +1,5 @@
-from app import db                                                                                                                               
-from datetime import datetime
+from datetime import datetime, timezone
+from app import db
                                                                                                                                                    
 class SimulationState(db.Model):
     __tablename__ = 'simulation_state'
@@ -10,5 +10,5 @@ class SimulationState(db.Model):
     speed = db.Column(db.Float, nullable=False, default=1.0)                                                                                     
     world_width = db.Column(db.Integer, nullable=False)     
     world_height = db.Column(db.Integer, nullable=False)                                                                                         
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
