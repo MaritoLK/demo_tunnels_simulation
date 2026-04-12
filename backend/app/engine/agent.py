@@ -1,3 +1,4 @@
+"""Runtime Agent and per-tick driver. Pure Python — no Flask, no DB imports."""
 from . import actions, needs
 
 
@@ -8,12 +9,12 @@ class Agent:
         'age', 'alive',
     )
 
-    def __init__(self, name, x, y, id=None):
-        self.id = id
+    def __init__(self, name, x, y, agent_id=None):
+        self.id = agent_id
         self.name = name
         self.x = x
         self.y = y
-        self.state = 'idle'
+        self.state = actions.STATE_IDLE
         self.hunger = needs.NEED_MAX
         self.energy = needs.NEED_MAX
         self.social = needs.NEED_MAX
@@ -39,9 +40,9 @@ def decide_action(agent):
     return 'explore'
 
 
-def execute_action(action_name, agent, world, all_agents, rng=None):
+def execute_action(action_name, agent, world, all_agents, *, rng):
     if action_name == 'forage':
-        return actions.forage(agent, world)
+        return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
         return actions.rest(agent)
     if action_name == 'socialise':
@@ -51,15 +52,22 @@ def execute_action(action_name, agent, world, all_agents, rng=None):
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
-def tick_agent(agent, world, all_agents, rng=None):
+def tick_agent(agent, world, all_agents, *, rng):
     if not agent.alive:
         return []
 
     events = []
-    needs.decay_needs(agent)
 
-    if agent.energy <= 0:
-        agent.state = 'resting'
+    # Pre-decay death check: an agent that entered the tick already at
+    # zero health is semantically a corpse. Don't decay its needs first —
+    # die immediately. The post-decay check below still catches the
+    # common case where starvation drives health across the threshold
+    # *this tick*.
+    if agent.health <= 0:
+        events.append(actions.die(agent))
+        return events
+
+    needs.decay_needs(agent)
 
     if agent.health <= 0:
         events.append(actions.die(agent))

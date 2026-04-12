@@ -1,3 +1,4 @@
+"""Need-tuning constants and the per-tick decay function. Pure Python."""
 HUNGER_DECAY = 0.5
 ENERGY_DECAY = 0.3
 SOCIAL_DECAY = 0.1

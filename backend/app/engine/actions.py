@@ -1,7 +1,24 @@
+"""Action functions. Each returns an event dict and mutates the agent / world.
+
+Pure Python — no Flask, no DB imports. Safe to unit-test without fixtures.
+
+Any action that consumes randomness takes `rng` as a keyword-only required
+argument — no silent fallback to the `random` module. The engine's
+reproducibility contract (sub-seeded rng_spawn / rng_tick, see §9.11) is
+only useful if every caller threads rng through; enforcing it at the
+signature makes the contract impossible to bypass by accident.
+"""
 from . import needs
 
 
 DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+STATE_IDLE = 'idle'
+STATE_RESTING = 'resting'
+STATE_FORAGING = 'foraging'
+STATE_SOCIALISING = 'socialising'
+STATE_EXPLORING = 'exploring'
+STATE_DEAD = 'dead'
 
 
 def step_toward(agent, target_x, target_y, world):
@@ -29,6 +46,13 @@ def step_toward(agent, target_x, target_y, world):
 
 
 def adjacent_food_tile(agent, world):
+    # Own tile counts: an agent standing on food should be able to eat it.
+    # Without this check, find_nearest_tile returns the own tile, step_toward
+    # has dx=dy=0 so yields no candidates, and the agent falls through to
+    # explore — starving on top of food.
+    here = world.get_tile(agent.x, agent.y)
+    if here.resource_type == 'food' and here.resource_amount > 0:
+        return here
     for dx, dy in DIRECTIONS:
         nx, ny = agent.x + dx, agent.y + dy
         if not world.in_bounds(nx, ny):
@@ -40,24 +64,34 @@ def adjacent_food_tile(agent, world):
 
 
 def adjacent_agent(agent, agents):
+    # Includes co-located agents (distance 0). Agents legitimately end up
+    # sharing a tile (small worlds, random walk converging), and with
+    # == 1 they could never socialise out of it — social decayed forever.
     for other in agents:
         if other is agent or not other.alive:
             continue
-        if abs(other.x - agent.x) + abs(other.y - agent.y) == 1:
+        if abs(other.x - agent.x) + abs(other.y - agent.y) <= 1:
             return other
     return None
 
 
-def forage(agent, world):
+def forage(agent, world, *, rng):
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
         taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount)
         tile.resource_amount -= taken
         agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
-        agent.state = 'foraging'
+        agent.state = STATE_FORAGING
         return {
             'type': 'foraged',
             'description': f'{agent.name} gathered food at ({tile.x},{tile.y})',
+            # Structured payload drives the persistence dirty-set: the service
+            # updates exactly the tile rows whose amount changed.
+            'data': {
+                'tile_x': tile.x,
+                'tile_y': tile.y,
+                'amount_taken': taken,
+            },
         }
 
     target = world.find_nearest_tile(
@@ -65,20 +99,22 @@ def forage(agent, world):
         lambda t: t.resource_type == 'food' and t.resource_amount > 0,
     )
     if target is None:
-        return explore(agent, world)
+        return explore(agent, world, rng=rng)
 
     moved = step_toward(agent, target.x, target.y, world)
-    agent.state = 'foraging'
+    if not moved:
+        # greedy step blocked (no pathfinding); random walk so agent at least moves
+        return explore(agent, world, rng=rng)
+    agent.state = STATE_FORAGING
     return {
         'type': 'moved',
-        'description': f'{agent.name} moved toward food at ({target.x},{target.y})' if moved
-        else f'{agent.name} blocked on route to food',
+        'description': f'{agent.name} moved toward food at ({target.x},{target.y})',
     }
 
 
 def rest(agent):
     agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE)
-    agent.state = 'resting'
+    agent.state = STATE_RESTING
     return {
         'type': 'rested',
         'description': f'{agent.name} rested',
@@ -91,26 +127,24 @@ def socialise(agent, agents):
         return {'type': 'idled', 'description': f'{agent.name} found no one to socialise with'}
     agent.social = min(needs.NEED_MAX, agent.social + needs.SOCIALISE_SOCIAL_RESTORE)
     other.social = min(needs.NEED_MAX, other.social + needs.SOCIALISE_SOCIAL_RESTORE)
-    agent.state = 'socialising'
+    agent.state = STATE_SOCIALISING
     return {
         'type': 'socialised',
         'description': f'{agent.name} socialised with {other.name}',
     }
 
 
-def explore(agent, world, rng=None):
-    import random
-    rng = rng or random
+def explore(agent, world, *, rng):
     options = []
     for dx, dy in DIRECTIONS:
         nx, ny = agent.x + dx, agent.y + dy
         if world.in_bounds(nx, ny) and world.get_tile(nx, ny).is_walkable:
             options.append((nx, ny))
     if not options:
-        agent.state = 'idle'
+        agent.state = STATE_IDLE
         return {'type': 'idled', 'description': f'{agent.name} stayed in place'}
     agent.x, agent.y = rng.choice(options)
-    agent.state = 'exploring'
+    agent.state = STATE_EXPLORING
     return {
         'type': 'moved',
         'description': f'{agent.name} moved to ({agent.x},{agent.y})',
@@ -119,7 +153,7 @@ def explore(agent, world, rng=None):
 
 def die(agent):
     agent.alive = False
-    agent.state = 'dead'
+    agent.state = STATE_DEAD
     return {
         'type': 'died',
         'description': f'{agent.name} has died',

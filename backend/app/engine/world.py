@@ -1,3 +1,4 @@
+"""World grid, Tile, and procedural generation. Pure Python — no Flask, no DB."""
 import random
 
 
@@ -56,6 +57,16 @@ class World:
                 resource_type, resource_amount = self._roll_resource(terrain, rng)
                 row.append(Tile(x, y, terrain, resource_type, resource_amount))
             self.tiles.append(row)
+
+        # Invariant: at least one walkable tile. Unlucky seeds on small grids
+        # can roll every tile to water. Force (0,0) to grass deterministically
+        # rather than retry with a perturbed seed (which would break the
+        # seed→state contract).
+        if not any(t.is_walkable for row in self.tiles for t in row):
+            fallback = self.tiles[0][0]
+            fallback.terrain = 'grass'
+            fallback.resource_type = None
+            fallback.resource_amount = 0.0
 
     @staticmethod
     def _roll_resource(terrain, rng):

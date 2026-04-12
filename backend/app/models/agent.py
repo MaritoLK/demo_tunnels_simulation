@@ -18,7 +18,8 @@ class Agent(db.Model):
     age = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     alive = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     created_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
+        nullable=False,
         default=lambda: datetime.now(timezone.utc),
         server_default=db.func.now(),
     )
