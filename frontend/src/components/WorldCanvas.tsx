@@ -1,0 +1,283 @@
+// Binds data (React Query) + view state (Zustand) + render adapter
+// (Renderer interface) behind a single React component.
+//
+// Render loop contract:
+//   - We do NOT re-render the component every tick. React decides when
+//     to mount/unmount; requestAnimationFrame decides when to draw.
+//     Tick-rate and frame-rate are decoupled by design (§9.23).
+//   - The rAF callback reads the *latest* data from refs populated by
+//     the React/Zustand hooks. So when React Query or Zustand updates,
+//     the next frame picks it up; we don't restart the loop.
+//   - The Renderer is mounted once and disposed on unmount.
+//
+// Sizing:
+//   - A `ResizeObserver` watches the wrapper `observe__frame` (the
+//     parent node of this component). On world-load or frame resize,
+//     we compute the zoom that makes the world fill the frame, then
+//     centre the camera. This is the Konva/TileMap "fit-to-viewport"
+//     pattern — the canvas is never a small island in a big dark void.
+//   - Manual wheel-zoom overrides auto-fit until the world reloads.
+//
+// Interaction:
+//   - Drag (mousedown → mousemove → mouseup) pans the camera.
+//   - Wheel zooms around the cursor — the tile under the cursor stays
+//     under the cursor across the zoom, which feels natural.
+//   - A click without meaningful drag hit-tests the agent layer and
+//     updates `selectedAgentId` via Zustand.
+import { useEffect, useMemo, useRef } from 'react';
+
+import { useAgents, useSimulation, useWorld } from '../api/queries';
+import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
+import type { FrameSnapshot, Renderer } from '../render/Renderer';
+import { useViewStore } from '../state/viewStore';
+
+const BASE_TILE_PX = 16;
+// A press that moves fewer than this many pixels total is treated as a
+// click, not a drag — avoids eating clicks whose pointer jittered a px.
+const CLICK_DRAG_THRESHOLD = 4;
+// Inset so the fitted world doesn't kiss the frame edge.
+const FIT_PAD = 24;
+
+export function WorldCanvas() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<Renderer | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const snapRef = useRef<FrameSnapshot | null>(null);
+  const dragRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    totalMoved: number;
+  } | null>(null);
+  // Track whether the user has manually adjusted the view (wheel-zoom
+  // *or* pan) since the last world-load. If they have, don't clobber
+  // their view when the frame resizes — only auto-fit on world change.
+  // Both wheel and pan flip this flag; they're symmetric forms of
+  // "user changed the camera" and should be treated the same way.
+  const userAdjustedRef = useRef(false);
+  // Record the world id so we can distinguish "same world, user zoomed"
+  // from "new world, re-fit". Signature includes seed so that two
+  // generations with identical dims but different seeds count as new
+  // worlds. If the user regenerates with *identical* inputs (same
+  // seed + same dims) the world is byte-for-byte the same, so keeping
+  // their view is correct.
+  const fittedWorldSigRef = useRef<string | null>(null);
+
+  const sim = useSimulation();
+  const world = useWorld();
+  const agents = useAgents();
+  const zoom = useViewStore((s) => s.zoom);
+  const cameraX = useViewStore((s) => s.cameraX);
+  const cameraY = useViewStore((s) => s.cameraY);
+  const selectedAgentId = useViewStore((s) => s.selectedAgentId);
+  const pan = useViewStore((s) => s.pan);
+  const setCamera = useViewStore((s) => s.setCamera);
+  const setZoom = useViewStore((s) => s.setZoom);
+  const selectAgent = useViewStore((s) => s.selectAgent);
+
+  const tilePx = BASE_TILE_PX * zoom;
+
+  // Keep the snapshot ref in sync with the latest server + view state.
+  useEffect(() => {
+    if (!world.data) {
+      snapRef.current = null;
+      return;
+    }
+    snapRef.current = {
+      width: world.data.width,
+      height: world.data.height,
+      tiles: world.data.tiles,
+      agents: agents.data ?? [],
+      tilePx,
+      cameraX,
+      cameraY,
+      selectedAgentId,
+    };
+  }, [world.data, agents.data, tilePx, cameraX, cameraY, selectedAgentId]);
+
+  // Auto-fit on world-load and observe-frame resize.
+  useEffect(() => {
+    if (!hostRef.current || !world.data) return;
+    // .world-canvas wrapper fills .observe__frame via `position:absolute;
+    // inset:0`, so its bounding rect === the stage dimensions. Measuring
+    // this wrapper instead of the frame means the fit math doesn't depend
+    // on ancestor CSS tricks we might forget about later.
+    const frame = hostRef.current.parentElement;
+    if (!frame) return;
+
+    const fit = () => {
+      const w = world.data!.width;
+      const h = world.data!.height;
+      // Seed is part of the signature so a regen with a different seed
+      // but same dimensions is treated as a new world. `seed` is
+      // user-nullable so coalesce to '∅' for a stable key.
+      const sig = `${w}x${h}:${sim.data?.seed ?? '∅'}`;
+      const frameRect = frame.getBoundingClientRect();
+      const availW = Math.max(100, frameRect.width - FIT_PAD * 2);
+      const availH = Math.max(100, frameRect.height - FIT_PAD * 2);
+      const worldPxW = w * BASE_TILE_PX;
+      const worldPxH = h * BASE_TILE_PX;
+      const fitZoom = Math.min(availW / worldPxW, availH / worldPxH);
+      const clampedZoom = Math.max(0.25, Math.min(4.0, fitZoom));
+      // On a new world (different sig), always re-fit. On the same
+      // world, only auto-fit if the user hasn't manually zoomed.
+      const newWorld = fittedWorldSigRef.current !== sig;
+      if (newWorld) {
+        userAdjustedRef.current = false;
+        fittedWorldSigRef.current = sig;
+      }
+      if (!newWorld && userAdjustedRef.current) return;
+      setZoom(clampedZoom);
+      const tilePxFit = BASE_TILE_PX * clampedZoom;
+      // Centre the world in the frame.
+      setCamera(
+        (frameRect.width - w * tilePxFit) / 2,
+        (frameRect.height - h * tilePxFit) / 2,
+      );
+    };
+
+    fit();
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(frame);
+    return () => ro.disconnect();
+  }, [world.data, sim.data?.seed, setZoom, setCamera]);
+
+  // Mount renderer once, start rAF loop, attach interaction listeners.
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const host = hostRef.current;
+    const renderer = new Canvas2DRenderer();
+    renderer.mount(host);
+    rendererRef.current = renderer;
+
+    const loop = () => {
+      const snap = snapRef.current;
+      if (snap && rendererRef.current) {
+        const w = snap.width * snap.tilePx;
+        const h = snap.height * snap.tilePx;
+        rendererRef.current.resize(w, h);
+        rendererRef.current.drawFrame(snap);
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+
+    const canvas = host.querySelector('canvas');
+    if (!canvas) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      dragRef.current = {
+        active: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        totalMoved: 0,
+      };
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d || !d.active) return;
+      const dx = e.clientX - d.lastX;
+      const dy = e.clientY - d.lastY;
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      d.totalMoved += Math.abs(dx) + Math.abs(dy);
+      if (d.totalMoved > CLICK_DRAG_THRESHOLD) {
+        pan(dx, dy);
+        // Pan is a user adjustment — symmetric with wheel-zoom. Without
+        // this, panning then resizing the frame would recentre the
+        // camera and eat the user's pan.
+        userAdjustedRef.current = true;
+      }
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) return;
+      if (d.totalMoved <= CLICK_DRAG_THRESHOLD) {
+        const rect = canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        const snap = snapRef.current;
+        if (!snap) return;
+        const worldX = (localX - snap.cameraX) / snap.tilePx;
+        const worldY = (localY - snap.cameraY) / snap.tilePx;
+        const hit = pickAgent(snap.agents, worldX, worldY);
+        selectAgent(hit?.id ?? null);
+      }
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+      const snap = snapRef.current;
+      if (!snap) return;
+      const worldX = (localX - snap.cameraX) / snap.tilePx;
+      const worldY = (localY - snap.cameraY) / snap.tilePx;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const { zoom: currentZoom } = useViewStore.getState();
+      const newZoom = Math.max(0.25, Math.min(4.0, currentZoom * factor));
+      setZoom(newZoom);
+      const newTilePx = BASE_TILE_PX * newZoom;
+      setCamera(localX - worldX * newTilePx, localY - worldY * newTilePx);
+      userAdjustedRef.current = true;
+    };
+
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      canvas.removeEventListener('wheel', onWheel);
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+    };
+  }, [pan, setCamera, setZoom, selectAgent]);
+
+  const status = useMemo(() => {
+    if (world.isLoading || agents.isLoading) return 'loading world…';
+    if (world.error || agents.error) {
+      const err = (world.error ?? agents.error) as { status?: number } | null;
+      if (err && err.status === 404) return null; // empty-state hero handles this
+      return 'connection error';
+    }
+    return null;
+  }, [world.isLoading, agents.isLoading, world.error, agents.error]);
+
+  return (
+    <div className="world-canvas">
+      <div ref={hostRef} className="world-canvas__host" />
+      {status && <div className="overlay">{status}</div>}
+    </div>
+  );
+}
+
+// Square hit-test against the agent body. Agents are drawn as circles
+// centred on the tile centre; a hit region slightly larger than the
+// body is generous without making nearby tiles clickable-through.
+function pickAgent(
+  list: { id: number; x: number; y: number; alive: boolean }[],
+  worldX: number,
+  worldY: number,
+) {
+  for (const a of list) {
+    const cx = a.x + 0.5;
+    const cy = a.y + 0.5;
+    if (Math.abs(worldX - cx) < 0.45 && Math.abs(worldY - cy) < 0.45) {
+      return a;
+    }
+  }
+  return null;
+}

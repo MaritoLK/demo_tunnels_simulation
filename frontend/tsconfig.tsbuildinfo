@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/api/client.ts","./src/api/queries.ts","./src/api/types.ts","./src/components/AgentPanel.tsx","./src/components/EventLog.tsx","./src/components/WorldCanvas.tsx","./src/render/Canvas2DRenderer.ts","./src/render/Renderer.ts","./src/state/viewStore.ts"],"version":"5.9.3"}
