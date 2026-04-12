@@ -1,16 +1,25 @@
-from flask import Flask
-from app import db
 import os
 
-def create_app():                                                                                                                                
+from flask import Flask
+from flask_migrate import Migrate
+
+from app import db
+from app import models  # noqa: F401 — side-effect import: registers models with db.metadata
+
+migrate = Migrate()
+
+
+def create_app():
     app = Flask(__name__)
 
-    @app.route("/api/health")                                                                                                                        
-    def health():            
+    @app.route("/api/health")
+    def health():
         return {"status": "ok"}
-    
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")  
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+
     db.init_app(app)
+    migrate.init_app(app, db)
     return app
     
 

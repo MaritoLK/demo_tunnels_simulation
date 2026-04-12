@@ -323,7 +323,7 @@ services:
       timeout: 3s
       retries: 5
 
-  api:
+  flask:
     build: ./backend
     environment:
       DATABASE_URL: postgresql://tunnels:${DB_PASSWORD:-tunnels_dev}@db:5432/tunnels
@@ -336,12 +336,12 @@ services:
     volumes:
       - ./backend:/app  # hot reload in dev
 
-  frontend:
+  react:
     build: ./frontend
     ports:
       - "5173:5173"
     depends_on:
-      - api
+      - flask
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -353,8 +353,8 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
-      - api
-      - frontend
+      - flask
+      - react
 
 volumes:
   pgdata:

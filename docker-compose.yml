@@ -37,7 +37,7 @@ services:
       POSTGRES_USER: tunnels
       POSTGRES_PASSWORD: ${DB_PASSWORD:-tunnels_dev}  
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:                                                                                                                                     
       test: ["CMD-SHELL", "pg_isready -U tunnels"]                                                                                                   
       interval: 5s                                
