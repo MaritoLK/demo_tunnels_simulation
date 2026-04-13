@@ -109,6 +109,61 @@ def test_query_events_respects_limit(db_session):
     assert len(got) <= 5
 
 
+def test_dirty_tiles_persist_depletion_after_foraged_event(db_session):
+    """§9.19 dirty-set: `foraged` events drive exactly the tile rows whose
+    `resource_amount` changed. Run until at least one forage lands, then
+    assert the DB row matches the engine's in-memory tile for that coord.
+    Guards against regressions that rebuild the whole tile table (slow)
+    or skip the update entirely (stale DB state across reloads).
+    """
+    sim = simulation_service.create_simulation(
+        width=6, height=6, seed=42, agent_count=3,
+    )
+    # Starting hunger=100 with 0.5/tick decay → agents don't cross
+    # HUNGER_MODERATE (50) until ~tick 100. Force-drop hunger so forage
+    # fires quickly instead of stepping hundreds of ticks in a unit test.
+    # sim is the cached singleton; mutating in-mem agents here is what
+    # the next step_simulation call reads.
+    for agent in sim.agents:
+        agent.hunger = 25.0
+
+    # Snapshot pre-forage resource amounts so the "depletion happened"
+    # assertion is real, not tautological. Without this, a double-bug
+    # (engine skipped depletion AND service skipped write) would leave
+    # engine_tile == db_tile and pass the equality check below.
+    pre_amounts = {
+        (t.x, t.y): t.resource_amount
+        for row in sim.world.tiles for t in row
+    }
+
+    foraged = []
+    for _ in range(30):
+        events = simulation_service.step_simulation(ticks=1)
+        foraged = [e for e in events if e['type'] == 'foraged']
+        if foraged:
+            break
+    assert foraged, 'expected forage events once agents were pre-hungered'
+
+    tx, ty = foraged[0]['data']['tile_x'], foraged[0]['data']['tile_y']
+    taken = foraged[0]['data']['amount_taken']
+    engine_tile = sim.world.get_tile(tx, ty)
+    db_tile = (
+        db.session.query(models.WorldTile)
+        .filter(models.WorldTile.x == tx, models.WorldTile.y == ty)
+        .one()
+    )
+    # Engine and DB agree on the post-forage value.
+    assert db_tile.resource_amount == engine_tile.resource_amount, (
+        f'DB out of sync with engine at ({tx},{ty}): '
+        f'db={db_tile.resource_amount} engine={engine_tile.resource_amount}'
+    )
+    # Depletion actually landed: pre - post == amount_taken (engine side)
+    # and the DB row reflects the drop.
+    assert taken > 0
+    assert pre_amounts[(tx, ty)] - engine_tile.resource_amount == taken
+    assert db_tile.resource_amount < pre_amounts[(tx, ty)]
+
+
 def test_event_fk_restricts_agent_delete(db_session):
     """DB-level invariant: events.agent_id FK is ON DELETE RESTRICT.
 

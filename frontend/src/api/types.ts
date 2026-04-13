@@ -41,6 +41,21 @@ export interface SimulationSummary {
   agent_count: number;
   alive_count: number;
   running: boolean;
+  speed: number;
+}
+
+// Composite polling response — one round-trip replaces the four separate
+// queries (sim/world/agents/events). See backend §9.27 for why.
+export interface WorldStateResponse {
+  sim: SimulationSummary;
+  world: WorldSnapshot;
+  agents: Agent[];
+  events: EventRow[];
+}
+
+export interface SimControlUpdate {
+  running?: boolean;
+  speed?: number;
 }
 
 export interface EventRow {

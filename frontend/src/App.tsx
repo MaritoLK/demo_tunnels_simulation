@@ -1,15 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { useCreateSimulation, useSimulation, useStepSimulation } from './api/queries';
+import { ApiError } from './api/client';
+import {
+  useCreateSimulation,
+  useSimControl,
+  useSimulation,
+  useStepSimulation,
+} from './api/queries';
 import { AgentPanel } from './components/AgentPanel';
 import { EmptyState } from './components/EmptyState';
 import { EventLog } from './components/EventLog';
 import { WorldCanvas } from './components/WorldCanvas';
+import { parseNumberInput } from './state/numberInput';
+import { nextTickPulseState } from './state/tickPulse';
 
 export function App() {
   const sim = useSimulation();
   const createSim = useCreateSimulation();
   const stepSim = useStepSimulation();
+  const simControl = useSimControl();
 
   const [width, setWidth] = useState(40);
   const [height, setHeight] = useState(25);
@@ -23,13 +32,12 @@ export function App() {
   const [tickPulse, setTickPulse] = useState(false);
   const prevTick = useRef<number | null>(null);
   useEffect(() => {
-    const t = sim.data?.tick ?? null;
-    if (t !== null && prevTick.current !== null && t !== prevTick.current) {
-      setTickPulse(true);
-      const id = setTimeout(() => setTickPulse(false), 420);
-      return () => clearTimeout(id);
-    }
-    prevTick.current = t;
+    const { pulse, next } = nextTickPulseState(prevTick.current, sim.data?.tick ?? null);
+    prevTick.current = next;
+    if (!pulse) return;
+    setTickPulse(true);
+    const id = setTimeout(() => setTickPulse(false), 420);
+    return () => clearTimeout(id);
   }, [sim.data?.tick]);
 
   const simStatus = getSimStatus(sim);
@@ -69,15 +77,41 @@ export function App() {
             <span className="panel__dot panel__dot--cyan" />
             <h2 className="panel__title">Simulate</h2>
           </div>
+          <div className="btn-row">
+            <button
+              className="btn btn--primary"
+              onClick={() => simControl.mutate({ running: !(sim.data?.running ?? false) })}
+              disabled={simControl.isPending || simStatus !== 'ok'}
+            >
+              <span className="btn__ico">{sim.data?.running ? '⏸' : '▶'}</span>
+              {sim.data?.running ? 'Pause' : 'Play'}
+            </button>
+            <button
+              className="btn"
+              onClick={() => stepSim.mutate(steps)}
+              disabled={stepSim.isPending || simStatus !== 'ok' || (sim.data?.running ?? false)}
+              title={sim.data?.running ? 'pause to step manually' : undefined}
+            >
+              <span className="btn__ico">⏭</span>
+              {stepSim.isPending ? '…' : `Step ${steps}`}
+            </button>
+          </div>
           <LabeledNumber label="ticks" value={steps} onChange={setSteps} />
-          <button
-            className="btn"
-            onClick={() => stepSim.mutate(steps)}
-            disabled={stepSim.isPending || simStatus !== 'ok'}
-          >
-            <span className="btn__ico">▶</span>
-            {stepSim.isPending ? 'Running…' : `Advance ${steps}`}
-          </button>
+          <label className="field">
+            <span className="field__label">
+              speed <span className="field__hint">{(sim.data?.speed ?? 1).toFixed(1)}×</span>
+            </span>
+            <input
+              type="range"
+              className="field__slider"
+              min={0.1}
+              max={10}
+              step={0.1}
+              value={sim.data?.speed ?? 1}
+              onChange={(e) => simControl.mutate({ speed: Number(e.target.value) })}
+              disabled={simStatus !== 'ok'}
+            />
+          </label>
         </section>
 
         <section className="panel">
@@ -174,8 +208,7 @@ type SimStatus = 'loading' | 'ok' | 'none' | 'error';
 function getSimStatus(sim: { isLoading: boolean; error: unknown; data: unknown }): SimStatus {
   if (sim.isLoading) return 'loading';
   if (sim.error) {
-    const e = sim.error as { status?: number };
-    if (e && typeof e === 'object' && e.status === 404) return 'none';
+    if (sim.error instanceof ApiError && sim.error.status === 404) return 'none';
     return 'error';
   }
   return 'ok';
@@ -201,7 +234,7 @@ function LabeledNumber({
         type="number"
         className="field__input"
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => onChange(parseNumberInput(e.target.value, value))}
       />
     </label>
   );

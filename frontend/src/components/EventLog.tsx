@@ -1,39 +1,45 @@
 // Scrollable feed of recent sim events.
 //
 // Two modes:
-//   - Global: last N events across all agents.
-//   - Per-agent: filtered to the selected agent.
-//
-// Data source: `useEvents` with filter derived from the view store.
-// The query key includes the filter, so toggling per-agent is a cache
-// swap, not a refetch-and-re-render storm.
-//
-// Budget: `limit: 200` today. If we eventually run sims with millions
-// of events, swap `useQuery` for `useInfiniteQuery` here — the API
-// already supports `since_tick` for cursor-style pagination.
-import { useMemo, useState } from 'react';
+//   - Global: piggy-backs on the composite /world/state poll — zero
+//     extra network traffic.
+//   - Per-agent: separate filtered query that polls while the sim is
+//     running. React Query's per-key cache keeps mode toggles cheap.
+import { useState } from 'react';
 
-import { useEvents } from '../api/queries';
+import { useEvents, useLiveEvents, useSimulation } from '../api/queries';
 import type { EventRow } from '../api/types';
 import { useViewStore } from '../state/viewStore';
 
 const LIMIT = 200;
+const POLL_INTERVAL_MS = 500;
 
 export function EventLog() {
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);
   const [pinToSelected, setPinToSelected] = useState(false);
+  const sim = useSimulation();
+  const running = sim.data?.running ?? false;
 
-  const filter = useMemo(() => {
-    if (pinToSelected && selectedAgentId !== null) {
-      return { agent_id: selectedAgentId, limit: LIMIT };
-    }
-    return { limit: LIMIT };
-  }, [pinToSelected, selectedAgentId]);
+  const pinned = pinToSelected && selectedAgentId !== null;
 
-  const events = useEvents(filter);
-  // API returns oldest first (ascending by tick); reverse for a
-  // newsfeed feel — newest on top.
-  const rows = useMemo(() => [...(events.data ?? [])].reverse(), [events.data]);
+  // Global feed: share the composite cache. Filtered feed: own query,
+  // gated on running so a paused sim produces zero traffic.
+  const live = useLiveEvents({ enabled: !pinned });
+  const filtered = useEvents(
+    pinned ? { agent_id: selectedAgentId!, limit: LIMIT } : {},
+    {
+      enabled: pinned,
+      refetchInterval: running ? POLL_INTERVAL_MS : false,
+    },
+  );
+
+  const active = pinned ? filtered : live;
+  // Render in server order (oldest → newest). Newest-on-top visual is
+  // handled by `flex-direction: column-reverse` on `.eventlog`. This
+  // keeps the DOM insertion order stable so role="log" +
+  // aria-relevant="additions" announce only *new* rows to screen
+  // readers instead of treating every reshuffled item as an addition.
+  const rows = active.data ?? [];
 
   return (
     <section className="panel panel--grow">
@@ -51,13 +57,16 @@ export function EventLog() {
         </label>
       </div>
 
-      {events.isLoading && <p className="eventlog__empty">loading…</p>}
-      {!events.isLoading && rows.length === 0 && (
+      {active.isLoading && <p className="eventlog__empty">loading…</p>}
+      {!active.isLoading && rows.length === 0 && (
         <p className="eventlog__empty">no events yet — advance the sim</p>
       )}
 
       {rows.length > 0 && (
-        <ul className="eventlog">
+        // role="log" implies aria-live="polite" + aria-relevant="additions
+        // text" per ARIA 1.2. Explicit duplicates removed — a single
+        // attribute is easier to reason about and avoids SR double-reads.
+        <ul className="eventlog" role="log" aria-label="simulation events">
           {rows.map((ev, i) => (
             <li key={`${ev.tick}-${ev.agent_id ?? 'x'}-${i}`} className="eventlog__row">
               <span className="eventlog__tick">t{ev.tick}</span>

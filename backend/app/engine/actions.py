@@ -114,6 +114,11 @@ def forage(agent, world, *, rng):
 
 def rest(agent):
     agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE)
+    # Rest while well-fed → extra health regen on top of the passive drip
+    # in decay_needs. Strict-greater gate matches decay_needs so a single
+    # threshold controls "is this agent fed enough to heal."
+    if agent.hunger > needs.HUNGER_MODERATE:
+        agent.health = min(needs.NEED_MAX, agent.health + needs.REST_HEAL_BONUS)
     agent.state = STATE_RESTING
     return {
         'type': 'rested',

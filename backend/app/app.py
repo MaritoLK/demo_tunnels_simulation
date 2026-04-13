@@ -20,6 +20,7 @@ from flask_migrate import Migrate
 from app import db
 from app import models  # noqa: F401 — side-effect import: registers models with db.metadata
 from app.routes.simulation import bp as simulation_bp
+from app.services import tick_loop
 from app.services.exceptions import SimulationNotFoundError, SimulationStateError
 
 
@@ -50,6 +51,12 @@ def create_app():
     app.register_blueprint(simulation_bp, url_prefix="/api/v1")
 
     _register_error_handlers(app)
+
+    # Start the background tick loop unless explicitly disabled (tests set
+    # DISABLE_TICK_LOOP=1 so the loop doesn't mutate DB state while the
+    # test client is driving it via POST /step). See §9.27.
+    if not os.environ.get("DISABLE_TICK_LOOP"):
+        tick_loop.start(app)
 
     return app
 

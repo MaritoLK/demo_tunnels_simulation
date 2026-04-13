@@ -45,7 +45,13 @@ def world_to_dict(world):
     }
 
 
-def simulation_summary(sim):
+def simulation_summary(sim, control):
+    """Wire summary combining engine state (tick, agent counts) with the
+    DB-backed control flags (running, speed). `control` is the dict returned
+    by `simulation_service.get_simulation_control()` — passing it in rather
+    than re-reading here keeps this serializer pure and the DB touch in
+    one place.
+    """
     return {
         'tick': sim.current_tick,
         'seed': sim.seed,
@@ -53,7 +59,8 @@ def simulation_summary(sim):
         'height': sim.world.height,
         'agent_count': len(sim.agents),
         'alive_count': len(sim.alive_agents),
-        'running': False,
+        'running': control['running'],
+        'speed': control['speed'],
     }
 
 

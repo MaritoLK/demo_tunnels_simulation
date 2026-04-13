@@ -51,6 +51,13 @@ export class Canvas2DRenderer implements Renderer {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private dpr = 1;
+  // Last dimensions actually applied to the backing store. The rAF
+  // loop in WorldCanvas calls resize() every frame; assigning
+  // canvas.width/height clears the backing store and resets all 2D
+  // context state. Cache the last-applied (w, h) and skip no-ops so
+  // steady-state frames are pure draws.
+  private lastWidthPx = -1;
+  private lastHeightPx = -1;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -67,6 +74,9 @@ export class Canvas2DRenderer implements Renderer {
 
   resize(widthPx: number, heightPx: number): void {
     if (!this.canvas || !this.ctx) return;
+    if (widthPx === this.lastWidthPx && heightPx === this.lastHeightPx) return;
+    this.lastWidthPx = widthPx;
+    this.lastHeightPx = heightPx;
     this.canvas.style.width = `${widthPx}px`;
     this.canvas.style.height = `${heightPx}px`;
     this.canvas.width = Math.floor(widthPx * this.dpr);
@@ -79,7 +89,10 @@ export class Canvas2DRenderer implements Renderer {
   drawFrame(snap: FrameSnapshot): void {
     if (!this.canvas || !this.ctx) return;
     const { ctx } = this;
-    const { width, height, tiles, agents, tilePx, cameraX, cameraY, selectedAgentId } = snap;
+    const {
+      width, height, tiles, agents, tilePx, cameraX, cameraY,
+      selectedAgentId, reducedMotion,
+    } = snap;
 
     ctx.save();
     // Background clear — match the shell ground so the canvas feels
@@ -167,48 +180,60 @@ export class Canvas2DRenderer implements Renderer {
       ctx.fill();
 
       if (a.id === selectedAgentId) {
-        // Selection reads as UI, not data — two concentric dashed rings
-        // rotating in opposite directions + a soft breathing halo. The
-        // inner ring matches the body radius; the outer sits further
-        // out so you can see the agent's own health colour through the
-        // gap. `performance.now()` keys the animation; the renderer
-        // stays a pure function of (snapshot, clock).
-        const t = performance.now() / 1000;
         const ringGap = Math.max(2, tilePx * 0.22);
-
-        // Breathing halo — soft coral bloom pulsing with `sigil-pulse`
-        // timing so the empty-state sigil and selection ring feel like
-        // the same visual language.
-        const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
-        ctx.fillStyle = `rgba(255, 123, 59, ${0.08 + pulse * 0.12})`;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
-        ctx.fill();
-
         ctx.strokeStyle = '#ff7b3b';
-        ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
 
-        // Outer dashed ring — rotates clockwise.
-        const dash = Math.max(2, tilePx * 0.18);
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(t * 0.6);
-        ctx.setLineDash([dash, dash * 0.8]);
-        ctx.beginPath();
-        ctx.arc(0, 0, r + ringGap, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
+        if (reducedMotion) {
+          // Static selection ring — one solid coral circle, no halo,
+          // no rotation. The user still needs to see which agent is
+          // picked; motion is the only thing we drop.
+          ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(cx, cy, r + ringGap, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // Animated selection — two concentric dashed rings rotating
+          // in opposite directions + a soft breathing halo. The inner
+          // ring matches the body radius; the outer sits further out
+          // so you can see the agent's own health colour through the
+          // gap. `performance.now()` keys the animation; the renderer
+          // stays a pure function of (snapshot, clock).
+          const t = performance.now() / 1000;
 
-        // Inner solid ring — tighter, rotates counter-clockwise.
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(-t * 0.9);
-        ctx.setLineDash([]);
-        ctx.lineWidth = Math.max(1, tilePx * 0.08);
-        ctx.beginPath();
-        ctx.arc(0, 0, r + ringGap * 0.45, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
+          // Breathing halo — soft coral bloom pulsing with `sigil-pulse`
+          // timing so the empty-state sigil and selection ring feel
+          // like the same visual language.
+          const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+          ctx.fillStyle = `rgba(255, 123, 59, ${0.08 + pulse * 0.12})`;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
+
+          // Outer dashed ring — rotates clockwise.
+          const dash = Math.max(2, tilePx * 0.18);
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(t * 0.6);
+          ctx.setLineDash([dash, dash * 0.8]);
+          ctx.beginPath();
+          ctx.arc(0, 0, r + ringGap, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // Inner solid ring — tighter, rotates counter-clockwise.
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(-t * 0.9);
+          ctx.setLineDash([]);
+          ctx.lineWidth = Math.max(1, tilePx * 0.08);
+          ctx.beginPath();
+          ctx.arc(0, 0, r + ringGap * 0.45, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     }
 
@@ -220,6 +245,8 @@ export class Canvas2DRenderer implements Renderer {
     this.canvas = null;
     this.ctx = null;
     this.host = null;
+    this.lastWidthPx = -1;
+    this.lastHeightPx = -1;
   }
 }
 

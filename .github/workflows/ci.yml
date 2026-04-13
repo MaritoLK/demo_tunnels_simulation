@@ -1,0 +1,87 @@
+# CI gate. Three independent jobs run in parallel on push + PR.
+#
+# backend-tests   — pytest against a real Postgres service. conftest.py
+#                   creates the `tunnels_test` database and runs Alembic
+#                   migrations itself (see backend/tests/conftest.py),
+#                   so we only need to hand it a DATABASE_URL pointing at
+#                   the Postgres service container.
+# frontend-tests  — vitest. No backend dependency; mocks the API layer.
+# frontend-typecheck — `tsc --noEmit`. Catches type errors that runtime
+#                      tests miss and that vite's dev server papers over.
+#
+# Lint deliberately omitted: no ruff/flake8 in requirements yet, and
+# adding one two days before the interview is scope creep.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: tunnels
+          POSTGRES_PASSWORD: tunnels_dev
+          POSTGRES_DB: tunnels
+        ports:
+          - 5432:5432
+        # Health check so the job waits for Postgres before running pytest.
+        # Mirrors the docker-compose healthcheck — same intent, different syntax.
+        options: >-
+          --health-cmd="pg_isready -U tunnels"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://tunnels:tunnels_dev@localhost:5432/tunnels
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Run pytest
+        working-directory: backend
+        run: pytest
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run vitest
+        working-directory: frontend
+        run: npx vitest run
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Type-check
+        working-directory: frontend
+        run: npx tsc --noEmit

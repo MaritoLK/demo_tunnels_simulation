@@ -28,6 +28,12 @@ export interface FrameSnapshot {
   cameraX: number;
   cameraY: number;
   selectedAgentId: number | null;
+  // When true, the renderer must skip animated decoration (rotating
+  // rings, pulsing halos, etc.) and draw a static equivalent. Sourced
+  // from `prefers-reduced-motion: reduce` and threaded through the
+  // snapshot rather than read inside the renderer, so the renderer
+  // stays a pure function of snapshot + clock.
+  reducedMotion: boolean;
 }
 
 export interface Renderer {

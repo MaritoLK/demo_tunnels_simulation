@@ -110,13 +110,45 @@ def replace_simulation():
     sim = simulation_service.create_simulation(
         width=width, height=height, seed=seed, agent_count=agent_count,
     )
-    return serializers.simulation_summary(sim), 200
+    control = simulation_service.get_simulation_control()
+    return serializers.simulation_summary(sim, control), 200
 
 
 @bp.get('/simulation')
 def get_simulation():
     sim = simulation_service.get_current_simulation()
-    return serializers.simulation_summary(sim), 200
+    control = simulation_service.get_simulation_control()
+    return serializers.simulation_summary(sim, control), 200
+
+
+@bp.patch('/simulation/control')
+def patch_simulation_control():
+    """Partial update of {running, speed}. PATCH semantics: omitted fields
+    are untouched. The background tick thread (§9.27) polls these flags
+    to drive itself — running gates the loop, speed sets the sleep.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        _bad('request body must be a JSON object')
+    running = body.get('running')
+    speed = body.get('speed')
+    if running is None and speed is None:
+        _bad('at least one of {running, speed} must be provided')
+    if running is not None and not isinstance(running, bool):
+        _bad('running must be a boolean', field='running', got=repr(running))
+    if speed is not None:
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            _bad('speed must be a number', field='speed', got=repr(speed))
+        if speed < simulation_service.MIN_SPEED or speed > simulation_service.MAX_SPEED:
+            _bad(
+                f'speed out of range [{simulation_service.MIN_SPEED}, '
+                f'{simulation_service.MAX_SPEED}]',
+                field='speed', got=speed,
+            )
+    updated = simulation_service.update_simulation_control(
+        running=running, speed=speed,
+    )
+    return updated, 200
 
 
 @bp.post('/simulation/step')
@@ -142,6 +174,43 @@ def get_world():
     return serializers.world_to_dict(sim.world), 200
 
 
+@bp.get('/world/state')
+def get_world_state():
+    """Composite polling endpoint — one request returns the full frame.
+
+    Shape:
+      { sim: {...summary...}, world: {...}, agents: [...], events: [...] }
+
+    `events` default: last `limit` events (newest first truncation via
+    tick desc ordering then reverse; see service layer). When `since_tick`
+    is provided, only events with tick > since_tick are returned
+    (delta-style, exclusive). The default makes the endpoint self-sufficient
+    for a cold-load polling client — no separate history bootstrap needed.
+    The nginx micro-cache (§9.27d) keeps the repeated "last 100" payload
+    from hammering the DB: one cache entry per sim per 1s window
+    (nginx proxy_cache_valid requires integer seconds — see nginx.conf).
+    """
+    # Min is -1, not 0: engine ticks start at 0 so tick-0 events exist,
+    # and `since_tick` filter is exclusive (`tick > N`). A client that
+    # wants "all events from the start" passes -1. See §9.28 B1 fix.
+    since_tick = _query_int('since_tick', allow_none=True, min=-1)
+    limit = _query_int(
+        'limit', default=DEFAULT_EVENTS_LIMIT,
+        min=1, max=MAX_EVENTS_LIMIT,
+    )
+    sim = simulation_service.get_current_simulation()
+    control = simulation_service.get_simulation_control()
+    event_rows = simulation_service.query_events(
+        since_tick=since_tick, limit=limit,
+    )
+    return {
+        'sim': serializers.simulation_summary(sim, control),
+        'world': serializers.world_to_dict(sim.world),
+        'agents': [serializers.agent_to_dict(a) for a in sim.agents],
+        'events': [serializers.event_row_to_dict(r) for r in event_rows],
+    }, 200
+
+
 @bp.get('/agents')
 def get_agents():
     sim = simulation_service.get_current_simulation()
@@ -153,7 +222,8 @@ def get_agents():
 @bp.get('/events')
 def get_events():
     agent_id = _query_int('agent_id', allow_none=True, min=1)
-    since_tick = _query_int('since_tick', allow_none=True, min=0)
+    # See /world/state for the -1 convention.
+    since_tick = _query_int('since_tick', allow_none=True, min=-1)
     limit = _query_int(
         'limit', default=DEFAULT_EVENTS_LIMIT,
         min=1, max=MAX_EVENTS_LIMIT,

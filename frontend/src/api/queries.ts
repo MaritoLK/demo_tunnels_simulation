@@ -1,68 +1,114 @@
-// React Query hooks. Each hook owns a cache key, so mutations that
-// affect the world (create, step) can invalidate the right slice.
+// React Query hooks.
 //
-// Why React Query:
-//   - Generational sim will produce event streams that dwarf a single
-//     useState snapshot. `useInfiniteQuery` is the right shape for that.
-//   - Background refetch + staleTime lets the UI poll without flicker.
-//   - Mutation → invalidation is one line; the alternative is manual
-//     "now refetch everything" plumbing in every handler.
+// §9.27 architecture shift: the backend now runs a background tick loop.
+// The frontend polls ONE composite endpoint (`/world/state`) instead of
+// fetching sim/world/agents/events separately — same wall-clock latency
+// for every consumer and one nginx cache entry serves N viewers.
 //
-// Key convention: ['world'], ['agents'], ['sim'], ['events', filters].
-// If we later switch to SSE/WebSocket, these hooks stay; only the
-// transport in api/client.ts changes.
+// Shape:
+//   useWorldState() — the base polling hook. Gates refetchInterval on
+//                     sim.running so a paused sim produces zero polling
+//                     traffic. Resuming the sim restarts polling on the
+//                     next render.
+//   useSimulation, useWorld, useAgents — `select`-based slices of the
+//                     same cache. Consumers keep their existing data
+//                     shape; under the hood every hook shares the one
+//                     query, one cache entry, one network request.
+//   useEvents — standalone query for filtered history (agent detail
+//               panel). The composite endpoint supplies the live log,
+//               so this hook is reserved for explicit filtered queries.
+//
+// Mutations invalidate `['worldState']` — the one key all slices read
+// from — so create/step fire a single refetch instead of four.
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
   type UseQueryOptions,
 } from '@tanstack/react-query';
 
-import { apiGet, apiSend } from './client';
+import { ApiError, apiGet, apiSend } from './client';
 import type {
   Agent,
   EventRow,
+  SimControlUpdate,
   SimulationSummary,
   WorldSnapshot,
+  WorldStateResponse,
 } from './types';
 
-export function useSimulation(
-  opts?: Omit<UseQueryOptions<SimulationSummary>, 'queryKey' | 'queryFn'>,
-) {
-  return useQuery<SimulationSummary>({
-    queryKey: ['sim'],
-    queryFn: () => apiGet<SimulationSummary>('/simulation'),
-    // Retry-on-404 would be wrong — a cold DB legitimately has no sim.
-    // Let the 404 propagate as error state; the UI shows a "create" button.
-    retry: (failureCount, err: unknown) => {
-      if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
-        return false;
-      }
-      return failureCount < 2;
+const WORLD_STATE_KEY = ['worldState'] as const;
+
+// How often to poll /world/state while the sim is running. 500ms matches
+// the brief and, paired with the nginx 1s micro-cache (§9.27d; nginx
+// requires integer-second TTL), means roughly every second poll is a
+// cache hit — DB sees ~1 req/s/sim regardless of viewer count.
+const POLL_INTERVAL_MS = 500;
+
+function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+// One place that builds the base query config. All slice hooks spread
+// this so they share the cache + polling behaviour.
+function worldStateQuery(): UseQueryOptions<WorldStateResponse> {
+  return {
+    queryKey: WORLD_STATE_KEY as unknown as readonly unknown[],
+    queryFn: () => apiGet<WorldStateResponse>('/world/state'),
+    refetchInterval: (query) => {
+      const running = query.state.data?.sim?.running;
+      return running ? POLL_INTERVAL_MS : false;
     },
+    retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 2),
+  };
+}
+
+export function useWorldState(
+  opts?: Omit<UseQueryOptions<WorldStateResponse>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<WorldStateResponse>({ ...worldStateQuery(), ...opts });
+}
+
+export function useSimulation(
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, SimulationSummary>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<WorldStateResponse, Error, SimulationSummary>({
+    ...worldStateQuery(),
+    select: (d) => d.sim,
     ...opts,
   });
 }
 
 export function useWorld(
-  opts?: Omit<UseQueryOptions<WorldSnapshot>, 'queryKey' | 'queryFn'>,
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, WorldSnapshot>, 'queryKey' | 'queryFn'>,
 ) {
-  return useQuery<WorldSnapshot>({
-    queryKey: ['world'],
-    queryFn: () => apiGet<WorldSnapshot>('/world'),
+  return useQuery<WorldStateResponse, Error, WorldSnapshot>({
+    ...worldStateQuery(),
+    select: (d) => d.world,
     ...opts,
   });
 }
 
 export function useAgents(
-  opts?: Omit<UseQueryOptions<Agent[]>, 'queryKey' | 'queryFn'>,
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, Agent[]>, 'queryKey' | 'queryFn'>,
 ) {
-  return useQuery<Agent[]>({
-    queryKey: ['agents'],
-    queryFn: async () => {
-      const res = await apiGet<{ agents: Agent[] }>('/agents');
-      return res.agents;
-    },
+  return useQuery<WorldStateResponse, Error, Agent[]>({
+    ...worldStateQuery(),
+    select: (d) => d.agents,
+    ...opts,
+  });
+}
+
+// Live event log slice — reads the `events` array that the composite
+// endpoint populates with the most recent N events. Separate hook rather
+// than inlining in EventLog so callers stay terse.
+export function useLiveEvents(
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, EventRow[]>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<WorldStateResponse, Error, EventRow[]>({
+    ...worldStateQuery(),
+    select: (d) => d.events,
     ...opts,
   });
 }
@@ -73,6 +119,15 @@ export interface EventFilter {
   limit?: number;
 }
 
+// Filtered events (e.g. per-agent history) — lives outside the composite
+// endpoint because filters are consumer-specific.
+//
+// placeholderData: keepPreviousData — when EventLog toggles between
+// global and per-agent mode, the filter changes and the query key
+// changes. Without this, React Query flips `data` to `undefined` while
+// the new key fetches, and the EventLog renders its "loading…" empty
+// state for a beat. keepPreviousData keeps the old rows visible until
+// the new ones arrive, so the toggle feels instant. See §9.29-F1.
 export function useEvents(
   filter: EventFilter = {},
   opts?: Omit<UseQueryOptions<EventRow[]>, 'queryKey' | 'queryFn'>,
@@ -88,6 +143,7 @@ export function useEvents(
       const res = await apiGet<{ events: EventRow[] }>(`/events${suffix}`);
       return res.events;
     },
+    placeholderData: keepPreviousData,
     ...opts,
   });
 }
@@ -105,10 +161,7 @@ export function useCreateSimulation() {
     mutationFn: (args: CreateSimArgs) =>
       apiSend<SimulationSummary>('PUT', '/simulation', args),
     onSuccess: () => {
-      // Everything world-derived is stale after a (re)create.
-      qc.invalidateQueries({ queryKey: ['sim'] });
-      qc.invalidateQueries({ queryKey: ['world'] });
-      qc.invalidateQueries({ queryKey: ['agents'] });
+      qc.invalidateQueries({ queryKey: WORLD_STATE_KEY });
       qc.invalidateQueries({ queryKey: ['events'] });
     },
   });
@@ -120,12 +173,23 @@ export function useStepSimulation() {
     mutationFn: (ticks: number) =>
       apiSend<{ tick: number; events: EventRow[] }>('POST', '/simulation/step', { ticks }),
     onSuccess: () => {
-      // World tiles may have had resource_amount decremented on forage;
-      // agents moved; events appended. Invalidate all three.
-      qc.invalidateQueries({ queryKey: ['sim'] });
-      qc.invalidateQueries({ queryKey: ['world'] });
-      qc.invalidateQueries({ queryKey: ['agents'] });
+      qc.invalidateQueries({ queryKey: WORLD_STATE_KEY });
       qc.invalidateQueries({ queryKey: ['events'] });
+    },
+  });
+}
+
+// Start/stop/speed control. Mutation rather than hook-owned state so the
+// button + slider can fire it and React Query handles the pending/error
+// UI. On success, invalidate `worldState` so the UI reflects the new
+// control flags without waiting for the next poll.
+export function useSimControl() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (update: SimControlUpdate) =>
+      apiSend<{ running: boolean; speed: number }>('PATCH', '/simulation/control', update),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WORLD_STATE_KEY });
     },
   });
 }

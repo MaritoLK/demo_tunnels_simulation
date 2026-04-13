@@ -104,6 +104,10 @@ def app():
     _ensure_test_db(test_url)
 
     os.environ['DATABASE_URL'] = test_url  # create_app reads this at call time
+    # The background tick loop (§9.27) mutates sim state every ~1s.
+    # Tests drive the sim explicitly via POST /step; a parallel auto-tick
+    # would corrupt test expectations. Disable it before create_app.
+    os.environ['DISABLE_TICK_LOOP'] = '1'
     flask_app = create_app()
     flask_app.config['TESTING'] = True
 

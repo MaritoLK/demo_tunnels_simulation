@@ -26,9 +26,11 @@
 //     updates `selectedAgentId` via Zustand.
 import { useEffect, useMemo, useRef } from 'react';
 
+import { ApiError } from '../api/client';
 import { useAgents, useSimulation, useWorld } from '../api/queries';
 import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
+import { isReducedMotion } from '../state/reducedMotion';
 import { useViewStore } from '../state/viewStore';
 
 const BASE_TILE_PX = 16;
@@ -94,6 +96,10 @@ export function WorldCanvas() {
       cameraX,
       cameraY,
       selectedAgentId,
+      // Re-read per snapshot update rather than once at mount —
+      // the OS preference can toggle while the app is running, and
+      // the extra matchMedia call is cheap.
+      reducedMotion: isReducedMotion(),
     };
   }, [world.data, agents.data, tilePx, cameraX, cameraY, selectedAgentId]);
 
@@ -167,7 +173,20 @@ export function WorldCanvas() {
     const canvas = host.querySelector('canvas');
     if (!canvas) return;
 
-    const onMouseDown = (e: MouseEvent) => {
+    // Pointer events + setPointerCapture. The browser routes every
+    // pointermove/pointerup to the capturing element until the pointer
+    // is released, regardless of where it travels — even outside the
+    // viewport, over the OS taskbar, or into another window. This
+    // fully covers the "zombie drag" case: no more window-level
+    // fallback listeners, no more blur-based guards. `lostpointercapture`
+    // fires unconditionally when capture ends, so dragRef clears on
+    // every terminating path (release, cancel, focus loss, drag-drop
+    // sequence). See §9.29-F2 for the audit trail.
+    const onPointerDown = (e: PointerEvent) => {
+      // Primary button only; ignore right-click/middle so they don't
+      // start a pan that the user doesn't expect.
+      if (e.button !== 0) return;
+      canvas.setPointerCapture(e.pointerId);
       dragRef.current = {
         active: true,
         startX: e.clientX,
@@ -178,7 +197,7 @@ export function WorldCanvas() {
       };
     };
 
-    const onMouseMove = (e: MouseEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
       const d = dragRef.current;
       if (!d || !d.active) return;
       const dx = e.clientX - d.lastX;
@@ -195,7 +214,7 @@ export function WorldCanvas() {
       }
     };
 
-    const onMouseUp = (e: MouseEvent) => {
+    const onPointerUp = (e: PointerEvent) => {
       const d = dragRef.current;
       dragRef.current = null;
       if (!d) return;
@@ -210,6 +229,14 @@ export function WorldCanvas() {
         const hit = pickAgent(snap.agents, worldX, worldY);
         selectAgent(hit?.id ?? null);
       }
+    };
+
+    // lostpointercapture is the single source of truth for "drag is
+    // over" — fires on pointerup AND on any implicit capture loss
+    // (focus change, pointercancel, element removal). Clearing here
+    // means a dragRef left behind by any terminating path gets reset.
+    const onLostCapture = () => {
+      dragRef.current = null;
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -230,16 +257,20 @@ export function WorldCanvas() {
       userAdjustedRef.current = true;
     };
 
-    canvas.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onLostCapture);
+    canvas.addEventListener('lostpointercapture', onLostCapture);
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-      canvas.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onLostCapture);
+      canvas.removeEventListener('lostpointercapture', onLostCapture);
       canvas.removeEventListener('wheel', onWheel);
       rendererRef.current?.dispose();
       rendererRef.current = null;
@@ -249,8 +280,8 @@ export function WorldCanvas() {
   const status = useMemo(() => {
     if (world.isLoading || agents.isLoading) return 'loading world…';
     if (world.error || agents.error) {
-      const err = (world.error ?? agents.error) as { status?: number } | null;
-      if (err && err.status === 404) return null; // empty-state hero handles this
+      const err = world.error ?? agents.error;
+      if (err instanceof ApiError && err.status === 404) return null; // empty-state hero handles this
       return 'connection error';
     }
     return null;

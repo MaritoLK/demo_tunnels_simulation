@@ -41,6 +41,54 @@ def get_current_simulation():
     return _current_sim
 
 
+def get_simulation_control():
+    """Return the user-controllable sim flags: {running, speed}.
+
+    Lives on SimulationState (not the in-memory Simulation) because these
+    are orchestration knobs — the background tick thread reads speed to
+    set its sleep, routes mutate running to start/stop the loop. Keeping
+    them DB-backed means a worker restart picks them up correctly; the
+    thread doesn't have to own the source of truth. See §9.27.
+    """
+    state = db.session.query(models.SimulationState).one_or_none()
+    if state is None:
+        raise SimulationNotFoundError('no simulation has been created')
+    return {'running': state.running, 'speed': state.speed}
+
+
+MIN_SPEED = 0.1
+MAX_SPEED = 20.0
+
+
+def update_simulation_control(*, running=None, speed=None):
+    """Partial update of the user-controllable flags. Returns the new state.
+
+    `None` means "don't touch this field" — partial PATCH semantics. Enforces
+    speed bounds here so the service is a trust boundary independent of the
+    route layer (routes do the shape validation, service defends invariants
+    even against a bad internal caller, e.g. a future CLI tool).
+    """
+    if speed is not None:
+        if not isinstance(speed, (int, float)) or isinstance(speed, bool):
+            raise ValueError(f'speed must be a number, got {speed!r}')
+        if speed < MIN_SPEED or speed > MAX_SPEED:
+            raise ValueError(
+                f'speed={speed} out of range [{MIN_SPEED}, {MAX_SPEED}]'
+            )
+    if running is not None and not isinstance(running, bool):
+        raise ValueError(f'running must be bool, got {running!r}')
+
+    state = db.session.query(models.SimulationState).one_or_none()
+    if state is None:
+        raise SimulationNotFoundError('no simulation has been created')
+    if running is not None:
+        state.running = running
+    if speed is not None:
+        state.speed = speed
+    db.session.commit()
+    return {'running': state.running, 'speed': state.speed}
+
+
 def _reset_cache():
     """For tests and reload paths — clear the module-level cache."""
     global _current_sim
