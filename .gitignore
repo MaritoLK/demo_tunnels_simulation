@@ -17,3 +17,9 @@ dist/
 
 # Personal study notes
 STUDY_NOTES.md
+
+#assets
+frontend/src/assets
+
+# Headless screenshot tool (playwright + chromium binary, ~300MB)
+screenshots/

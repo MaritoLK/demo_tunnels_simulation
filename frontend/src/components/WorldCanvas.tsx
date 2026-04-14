@@ -33,7 +33,13 @@ import type { FrameSnapshot, Renderer } from '../render/Renderer';
 import { isReducedMotion } from '../state/reducedMotion';
 import { useViewStore } from '../state/viewStore';
 
-const BASE_TILE_PX = 16;
+// Source sprites are 64×64, so BASE_TILE_PX=64 means zoom=1.0 renders
+// at native resolution (no scaling, sharpest result). The zoom floor
+// drops to 0.0625 to preserve the same minimum effective tile size as
+// the old 16×0.25=4px floor — large worlds in small frames still fit.
+const BASE_TILE_PX = 64;
+const ZOOM_MIN = 0.0625;
+const ZOOM_MAX = 4.0;
 // A press that moves fewer than this many pixels total is treated as a
 // click, not a drag — avoids eating clicks whose pointer jittered a px.
 const CLICK_DRAG_THRESHOLD = 4;
@@ -126,7 +132,7 @@ export function WorldCanvas() {
       const worldPxW = w * BASE_TILE_PX;
       const worldPxH = h * BASE_TILE_PX;
       const fitZoom = Math.min(availW / worldPxW, availH / worldPxH);
-      const clampedZoom = Math.max(0.25, Math.min(4.0, fitZoom));
+      const clampedZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fitZoom));
       // On a new world (different sig), always re-fit. On the same
       // world, only auto-fit if the user hasn't manually zoomed.
       const newWorld = fittedWorldSigRef.current !== sig;
@@ -250,7 +256,7 @@ export function WorldCanvas() {
       const worldY = (localY - snap.cameraY) / snap.tilePx;
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       const { zoom: currentZoom } = useViewStore.getState();
-      const newZoom = Math.max(0.25, Math.min(4.0, currentZoom * factor));
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, currentZoom * factor));
       setZoom(newZoom);
       const newTilePx = BASE_TILE_PX * newZoom;
       setCamera(localX - worldX * newTilePx, localY - worldY * newTilePx);

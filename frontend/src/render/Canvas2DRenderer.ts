@@ -1,7 +1,7 @@
 // Canvas2D implementation of Renderer.
 //
 // Scope/sizing: comfortably handles 100×100 tiles and ~100 moving agents
-// at 60fps on modest hardware. Past that, the fillRect-per-tile cost
+// at 60fps on modest hardware. Past that, the drawImage-per-tile cost
 // dominates; the swap point is roughly "when the Chrome profiler shows
 // >4ms in paint per frame" — at that point replace this file with a
 // PixiJS adapter that uses sprite batching.
@@ -10,13 +10,27 @@
 //   - Device-pixel-ratio scaling: set canvas.width to logical × DPR,
 //     then ctx.scale(DPR, DPR). Otherwise every pixel is blurred on
 //     retina displays. Common forgotten step, interview-quotable.
-//   - imageSmoothingEnabled = false: we want crisp tile grid, not
-//     bilinear interpolation between colours.
-//   - Agents drawn last so they sit above terrain.
-//   - Selected agent gets a ring, not a colour swap — colour carries
-//     meaning (health), shouldn't be overloaded with selection.
+//   - imageSmoothingEnabled = false: pixel art must not be bilinear-
+//     interpolated when scaled. Set in resize() and after each
+//     ctx.save()/restore() pair preserves it automatically.
+//   - Agents drawn last so they sit above terrain. Pawn sprite is
+//     blitted oversized (2× tile) and bottom-anchored so head/tool
+//     overshoot extends naturally above the unit's footprint.
+//   - Selected agent gets a ring, not a sprite swap — colour/sprite
+//     carry meaning (health/state), shouldn't be overloaded with
+//     selection.
+//   - Sprites load async via spriteAtlas.loadSprites(). Until ready,
+//     we fall back to the procedural rect-based render so there's no
+//     blank flash and tests don't require asset files.
 import type { Renderer, FrameSnapshot } from './Renderer';
 import type { Terrain } from '../api/types';
+import {
+  loadSprites,
+  SOURCE_TILE_PX,
+  TERRAIN_DECORATION,
+  TERRAIN_TILE,
+  type SpriteAtlas,
+} from './spriteAtlas';
 
 // Vivid WorldBox-inspired biome palette. Saturated, playful, reads as
 // "sandbox world" not "scientific map." The canvas is the hero — chrome
@@ -58,6 +72,11 @@ export class Canvas2DRenderer implements Renderer {
   // steady-state frames are pure draws.
   private lastWidthPx = -1;
   private lastHeightPx = -1;
+  // Sprite atlas — null until the async load resolves. Every draw
+  // checks this and either uses sprites (when ready) or falls back to
+  // the procedural rect renderer (during load, on load failure, in
+  // tests where the assets aren't bundled).
+  private sprites: SpriteAtlas | null = null;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -70,6 +89,20 @@ export class Canvas2DRenderer implements Renderer {
     if (!ctx) throw new Error('Canvas2D context unavailable');
     this.ctx = ctx;
     this.dpr = window.devicePixelRatio || 1;
+
+    // Fire-and-forget load. The rAF loop polls `this.sprites` each
+    // frame; when it flips from null to atlas, the next paint switches
+    // automatically. No await — mount() returning a promise would force
+    // the caller (WorldCanvas useEffect) into async-handling complexity
+    // we don't need.
+    loadSprites().then(
+      (atlas) => { this.sprites = atlas; },
+      (err) => {
+        // Silent fallback: keep using procedural draw. Log so we know
+        // why screenshots look different from expected.
+        console.warn('[Canvas2DRenderer] sprite load failed; using procedural fallback', err);
+      },
+    );
   }
 
   resize(widthPx: number, heightPx: number): void {
@@ -102,9 +135,11 @@ export class Canvas2DRenderer implements Renderer {
 
     ctx.translate(cameraX, cameraY);
 
-    // Terrain pass — flat biome fill, then a small darker speckle inset
-    // to break up tile flatness. Deterministic by (x,y) so it doesn't
-    // shimmer between frames. Cheap: one extra rect per tile.
+    // Terrain pass — sprite blit when the atlas is loaded, procedural
+    // rect-fill as fallback. The two paths produce structurally similar
+    // output (one tile per cell, resources on top); the sprite path is
+    // just prettier.
+    const sprites = this.sprites;
     for (let y = 0; y < height; y++) {
       const row = tiles[y];
       if (!row) continue;
@@ -113,34 +148,46 @@ export class Canvas2DRenderer implements Renderer {
         if (!tile) continue;
         const px = x * tilePx;
         const py = y * tilePx;
-        ctx.fillStyle = TERRAIN_FILL[tile.terrain] ?? '#000';
-        ctx.fillRect(px, py, tilePx, tilePx);
 
-        // Speckle placement: hash (x,y) into 4 corner positions so
-        // neighbouring tiles look different without noise.
-        const h = (x * 73856093) ^ (y * 19349663);
-        if (((h >>> 0) & 0b11) !== 0 && tilePx >= 8) {
-          ctx.fillStyle = TERRAIN_DARK[tile.terrain] ?? '#000';
-          const sp = Math.max(1, Math.floor(tilePx * 0.22));
-          const corner = (h >>> 2) & 0b11;
-          const sx = px + (corner & 1 ? tilePx - sp - 1 : 1);
-          const sy = py + (corner & 2 ? tilePx - sp - 1 : 1);
-          ctx.fillRect(sx, sy, sp, sp);
-        }
-
-        if (tile.resource_type && tile.resource_amount > 0) {
-          ctx.fillStyle = RESOURCE_DOT_COLOUR[tile.resource_type] ?? '#fff';
-          const cx = px + tilePx / 2;
-          const cy = py + tilePx / 2;
-          const r = Math.max(1.5, tilePx * 0.2);
-          ctx.beginPath();
-          ctx.arc(cx, cy, r, 0, Math.PI * 2);
-          ctx.fill();
-          // Tiny highlight for that game-y "item pickup" feel.
-          ctx.fillStyle = 'rgba(255,255,255,0.45)';
-          ctx.beginPath();
-          ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.35, 0, Math.PI * 2);
-          ctx.fill();
+        if (sprites) {
+          drawTerrainSprite(ctx, sprites, tile.terrain, px, py, tilePx);
+          if (tile.resource_type === 'food' && tile.resource_amount > 0) {
+            // Meat sprite for food, drawn at 50% tile centred so the
+            // resource reads as "an item on the tile" rather than
+            // dominating the whole cell. Full-tile meat looks like the
+            // tile *is* meat — and at distance the chunky drumstick
+            // silhouette reads as a T-rex head.
+            const meatSize = tilePx * 0.5;
+            const meatOffset = (tilePx - meatSize) / 2;
+            ctx.drawImage(
+              sprites.meat,
+              0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
+              px + meatOffset, py + meatOffset, meatSize, meatSize,
+            );
+          }
+          // Wood/stone: no overlay. The bush/rock decoration sprite
+          // already communicates the resource; a dot on top produces
+          // the "brown circle above tree / white circle on rock" bug
+          // where the resource pip visually fights the decoration.
+          // Dots are only for the procedural fallback path below.
+        } else {
+          // Procedural fallback — flat biome fill plus deterministic
+          // corner speckle. Kept verbatim so tests and screenshots
+          // remain consistent if sprite loading is disabled.
+          ctx.fillStyle = TERRAIN_FILL[tile.terrain] ?? '#000';
+          ctx.fillRect(px, py, tilePx, tilePx);
+          const h = (x * 73856093) ^ (y * 19349663);
+          if (((h >>> 0) & 0b11) !== 0 && tilePx >= 8) {
+            ctx.fillStyle = TERRAIN_DARK[tile.terrain] ?? '#000';
+            const sp = Math.max(1, Math.floor(tilePx * 0.22));
+            const corner = (h >>> 2) & 0b11;
+            const sx = px + (corner & 1 ? tilePx - sp - 1 : 1);
+            const sy = py + (corner & 2 ? tilePx - sp - 1 : 1);
+            ctx.fillRect(sx, sy, sp, sp);
+          }
+          if (tile.resource_type && tile.resource_amount > 0) {
+            drawResourceDot(ctx, tile.resource_type, px, py, tilePx);
+          }
         }
       }
     }
@@ -162,22 +209,44 @@ export class Canvas2DRenderer implements Renderer {
       ctx.ellipse(cx, cy + r * 0.55, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Body.
-      ctx.fillStyle = a.alive ? healthColour(a.health) : '#3a3f55';
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
+      if (sprites) {
+        // Tight crop on the pawn body inside the 192×192 frame. The
+        // body lives at roughly (46, 30)–(146, 160) in source pixels —
+        // the rest is animation-slack padding (head-bob + tool sweep
+        // room). Drawing the whole frame at 1.5×tile scaled the body
+        // down to 50% of the tile (visually invisible at fit-zoom).
+        // Render the tight crop at native aspect: 1 tile wide × 1.3
+        // tiles tall, foot anchored at tile bottom so only the head
+        // overshoots upward.
+        const srcX = 46, srcY = 30, srcW = 100, srcH = 130;
+        const pawnW = tilePx;
+        const pawnH = tilePx * (srcH / srcW);
+        const pawnX = cx - pawnW / 2;
+        const pawnY = cy + tilePx * 0.5 - pawnH;
+        if (!a.alive) {
+          ctx.save();
+          ctx.globalAlpha = 0.35;
+          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+          ctx.restore();
+        } else {
+          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+        }
+      } else {
+        // Procedural fallback body + outline + gloss highlight.
+        ctx.fillStyle = a.alive ? healthColour(a.health) : '#3a3f55';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
 
-      // Outline.
-      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-      ctx.lineWidth = Math.max(1, tilePx * 0.08);
-      ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.08);
+        ctx.stroke();
 
-      // Highlight for gloss.
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.beginPath();
-      ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.35, 0, Math.PI * 2);
-      ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath();
+        ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       if (a.id === selectedAgentId) {
         const ringGap = Math.max(2, tilePx * 0.22);
@@ -254,4 +323,81 @@ function healthColour(health: number): string {
   // Map 0..100 → red..green. Simple HSL interpolation.
   const h = Math.max(0, Math.min(120, (health / 100) * 120));
   return `hsl(${h}, 70%, 55%)`;
+}
+
+function drawTerrainSprite(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteAtlas,
+  terrain: Terrain,
+  px: number,
+  py: number,
+  tilePx: number,
+): void {
+  if (terrain === 'water') {
+    // Water has its own tileable sheet; tilemap.png water tiles are
+    // edge variants meant for autotiling, not solid fill.
+    ctx.drawImage(
+      sprites.water,
+      0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
+      px, py, tilePx, tilePx,
+    );
+    return;
+  }
+  if (terrain === 'sand') {
+    // Free pack has no sand tileset (flagged for Tier 3). Until then,
+    // a flat warm-yellow fill makes sand visually distinct from grass
+    // — without this, sand tiles render as grass and the terrain is
+    // a lie.
+    ctx.fillStyle = '#e7c77a';
+    ctx.fillRect(px, py, tilePx, tilePx);
+    return;
+  }
+  // All non-water terrains share the centre-grass cell as a base;
+  // the decoration overlay (bush/rock) is what visually distinguishes
+  // forest from grass and stone from grass at Tier 1.
+  const base = TERRAIN_TILE[terrain];
+  ctx.drawImage(
+    sprites.tilemap,
+    base.sx, base.sy, SOURCE_TILE_PX, SOURCE_TILE_PX,
+    px, py, tilePx, tilePx,
+  );
+  const decoration = TERRAIN_DECORATION[terrain];
+  if (decoration === 'bush') {
+    // Tight crop on the bush body inside the 128×128 frame. The
+    // visible bush occupies roughly the central 96×96 region with
+    // transparent padding around it — drawing the full frame at 1×1
+    // tile wastes ~25% of the tile on padding, leaving the bush
+    // smaller than the wood-resource dot and visually invisible at
+    // fit-zoom. A tight 16,16,96,96 crop makes the bush fill the tile.
+    ctx.drawImage(
+      sprites.bush,
+      16, 16, 96, 96,
+      px, py, tilePx, tilePx,
+    );
+  } else if (decoration === 'rock') {
+    ctx.drawImage(
+      sprites.rock,
+      0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
+      px, py, tilePx, tilePx,
+    );
+  }
+}
+
+function drawResourceDot(
+  ctx: CanvasRenderingContext2D,
+  resourceType: string,
+  px: number,
+  py: number,
+  tilePx: number,
+): void {
+  const cx = px + tilePx / 2;
+  const cy = py + tilePx / 2;
+  const r = Math.max(2, tilePx * 0.22);
+  ctx.fillStyle = RESOURCE_DOT_COLOUR[resourceType] ?? '#fff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = Math.max(1, tilePx * 0.06);
+  ctx.stroke();
 }

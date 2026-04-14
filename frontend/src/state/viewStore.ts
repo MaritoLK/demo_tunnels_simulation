@@ -44,7 +44,7 @@ export const useViewStore = create<ViewState>((set) => ({
   selectAgent: (id) => set({ selectedAgentId: id }),
   pan: (dx, dy) => set((s) => ({ cameraX: s.cameraX + dx, cameraY: s.cameraY + dy })),
   setCamera: (x, y) => set({ cameraX: x, cameraY: y }),
-  setZoom: (z) => set({ zoom: Math.max(0.25, Math.min(4.0, z)) }),
+  setZoom: (z) => set({ zoom: Math.max(0.0625, Math.min(4.0, z)) }),
   setPaused: (p) => set({ paused: p }),
   reset: () => set(INITIAL),
 }));
