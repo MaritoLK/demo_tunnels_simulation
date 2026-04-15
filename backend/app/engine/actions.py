@@ -163,3 +163,34 @@ def die(agent):
         'type': 'died',
         'description': f'{agent.name} has died',
     }
+
+
+def plant(agent, world, colony):
+    """Convert the tile under `agent` into a growing crop owned by `colony`.
+
+    Pre-conditions (caller should already have checked via decide_action):
+      * tile.crop_state == 'none'
+      * tile.resource_amount == 0 (i.e. empty wild)
+      * colony.growing_count < config.MAX_FIELDS_PER_COLONY
+
+    This function re-guards all three; a violated pre-condition yields an
+    `idled` no-op event so the engine never silently mutates state.
+    """
+    from . import config
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.crop_state != 'none':
+        return {'type': 'idled', 'description': f'{agent.name} found crop already here'}
+    if tile.resource_amount > 0:
+        return {'type': 'idled', 'description': f'{agent.name} found wild food here, skipping plant'}
+    if colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
+        return {'type': 'idled', 'description': f'{agent.name} deferred plant (field cap)'}
+
+    tile.crop_state = 'growing'
+    tile.crop_growth_ticks = 0
+    tile.crop_colony_id = colony.id
+    colony.growing_count += 1
+    return {
+        'type': 'planted',
+        'description': f'{agent.name} planted at ({tile.x},{tile.y})',
+        'data': {'tile_x': tile.x, 'tile_y': tile.y, 'colony_id': colony.id},
+    }
