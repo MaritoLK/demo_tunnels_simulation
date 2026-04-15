@@ -32,7 +32,68 @@ class Agent:
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
 
 
-def decide_action(agent):
+def decide_action(agent, world=None, colony=None, phase=None):
+    """Return the name of the action this agent should take this tick.
+
+    Order of precedence:
+      1. Survival (health/hunger/energy crit) — always applies.
+      2. Phase gating:
+         - dawn: eat at camp if possible, else walk there
+         - dusk: walk to camp
+         - night: rest (engine-wide; hunger decay halved in tick_agent)
+         - day: extended productive chain (harvest > plant > ...)
+      3. Existing tail (hunger_mod forage → social → explore).
+
+    Legacy single-arg callers (pre-cultivation sims, audit scripts) hit
+    the `colony is None` path and get the classic chain. This preserves
+    backwards compat while T11/T12 finish wiring phase + colony through.
+    """
+    from . import config
+
+    if colony is None:
+        return _legacy_decide_action(agent)
+
+    # Survival takes precedence over any phase behavior.
+    if agent.health < needs.HEALTH_CRITICAL:
+        return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
+    if agent.hunger < needs.HUNGER_CRITICAL:
+        return 'forage'
+    if agent.energy < needs.ENERGY_CRITICAL:
+        return 'rest'
+
+    if phase == 'night':
+        return 'rest'
+    if phase == 'dusk':
+        return 'step_to_camp'
+    if phase == 'dawn':
+        if (colony.is_at_camp(agent.x, agent.y)
+                and agent.hunger < needs.NEED_MAX
+                and colony.food_stock >= config.EAT_COST
+                and not agent.ate_this_dawn):
+            return 'eat_camp'
+        return 'step_to_camp'
+
+    # phase == 'day' — productive branches
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.crop_state == 'mature':
+        return 'harvest'
+    if (tile.crop_state == 'none'
+            and tile.resource_amount == 0
+            and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
+        return 'plant'
+
+    # Existing hunger/social/explore fallthrough
+    if agent.hunger < needs.HUNGER_MODERATE:
+        return 'forage'
+    if agent.social < needs.SOCIAL_LOW:
+        return 'socialise'
+    return 'explore'
+
+
+def _legacy_decide_action(agent):
+    """Pre-cultivation decision chain. Kept for legacy one-arg callers
+    (test_agent.py suite, audit/*.py scripts) until they migrate to the
+    new signature. Identical to the original body before T10."""
     if agent.health < needs.HEALTH_CRITICAL:
         return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
     if agent.hunger < needs.HUNGER_CRITICAL:
@@ -46,7 +107,7 @@ def decide_action(agent):
     return 'explore'
 
 
-def execute_action(action_name, agent, world, all_agents, *, rng):
+def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
     if action_name == 'forage':
         return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
@@ -55,6 +116,18 @@ def execute_action(action_name, agent, world, all_agents, *, rng):
         return actions.socialise(agent, all_agents)
     if action_name == 'explore':
         return actions.explore(agent, world, rng=rng)
+    if action_name == 'plant':
+        return actions.plant(agent, world, colony)
+    if action_name == 'harvest':
+        return actions.harvest(agent, world, colony)
+    if action_name == 'eat_camp':
+        return actions.eat_camp(agent, colony)
+    if action_name == 'step_to_camp':
+        moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world)
+        return {
+            'type': 'moved' if moved else 'idled',
+            'description': f'{agent.name} headed toward camp',
+        }
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
