@@ -7,9 +7,10 @@ class Agent:
         'id', 'name', 'x', 'y', 'state',
         'hunger', 'energy', 'social', 'health',
         'age', 'alive',
+        'colony_id', 'ate_this_dawn',
     )
 
-    def __init__(self, name, x, y, agent_id=None):
+    def __init__(self, name, x, y, agent_id=None, colony_id=None):
         self.id = agent_id
         self.name = name
         self.x = x
@@ -21,6 +22,11 @@ class Agent:
         self.health = needs.NEED_MAX
         self.age = 0
         self.alive = True
+        self.colony_id = colony_id
+        # Transient: set True when agent emits ate_from_cache in dawn phase;
+        # cleared by tick_agent when phase != 'dawn'. Keeps one-meal-per-day
+        # enforced without persisting a per-agent counter.
+        self.ate_this_dawn = False
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
