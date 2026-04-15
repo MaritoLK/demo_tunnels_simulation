@@ -221,10 +221,22 @@ def load_current_simulation():
 def query_events(agent_id=None, since_tick=None, limit=100):
     """Query persisted events with optional filters.
 
-    Routes go through this rather than touching models.Event directly — keeps
-    SQLAlchemy query construction in the service layer. Ordering is
-    deterministic: (tick asc, id asc) so cursor-style paging via `since_tick`
-    yields stable, resumable results.
+    Always returns events in ascending (tick, id) order — the canonical
+    replay stream (§2128). What changes with `since_tick` is *which window*
+    of that stream we select:
+
+      * `since_tick` set  — cursor mode. Events strictly after since_tick,
+                            oldest-first, capped at `limit`. Used for delta
+                            polling: client passes `last_seen_tick`, gets
+                            only what it hasn't seen.
+      * `since_tick` None — bootstrap mode. Return the latest `limit` events
+                            (the tail of the stream), still in ascending
+                            order. Fixes §9.32: previously returned the
+                            HEAD of the stream, so the live log in
+                            /world/state froze on tick 0 after ~50 ticks.
+
+    Tail selection is done by ordering desc + limit + reversing in Python,
+    which is O(limit) extra work and indexable via idx_events_tick (§9.17).
 
     Args:
       agent_id:   include only events for this agent id (or None for all).
@@ -238,8 +250,10 @@ def query_events(agent_id=None, since_tick=None, limit=100):
         q = q.filter(models.Event.agent_id == agent_id)
     if since_tick is not None:
         q = q.filter(models.Event.tick > since_tick)
-    q = q.order_by(models.Event.tick.asc(), models.Event.id.asc()).limit(limit)
-    return q.all()
+        q = q.order_by(models.Event.tick.asc(), models.Event.id.asc()).limit(limit)
+        return q.all()
+    q = q.order_by(models.Event.tick.desc(), models.Event.id.desc()).limit(limit)
+    return list(reversed(q.all()))
 
 
 def _rng_state_columns(sim):

@@ -181,11 +181,11 @@ def get_world_state():
     Shape:
       { sim: {...summary...}, world: {...}, agents: [...], events: [...] }
 
-    `events` default: last `limit` events (newest first truncation via
-    tick desc ordering then reverse; see service layer). When `since_tick`
-    is provided, only events with tick > since_tick are returned
-    (delta-style, exclusive). The default makes the endpoint self-sufficient
-    for a cold-load polling client — no separate history bootstrap needed.
+    `events` default: the latest `limit` events (service tails the stream
+    via desc+limit+reverse; see §9.32). When `since_tick` is provided,
+    only events with tick > since_tick are returned (delta-style,
+    exclusive). The default makes the endpoint self-sufficient for a
+    cold-load polling client — no separate history bootstrap needed.
     The nginx micro-cache (§9.27d) keeps the repeated "last 100" payload
     from hammering the DB: one cache entry per sim per 1s window
     (nginx proxy_cache_valid requires integer seconds — see nginx.conf).

@@ -21,22 +21,19 @@ export interface ViewState {
   cameraX: number;
   cameraY: number;
   zoom: number; // tile-size multiplier; 1.0 = default TILE_PX
-  paused: boolean;
 
   selectAgent: (id: number | null) => void;
   pan: (dx: number, dy: number) => void;
   setCamera: (x: number, y: number) => void;
   setZoom: (z: number) => void;
-  setPaused: (p: boolean) => void;
   reset: () => void;
 }
 
-const INITIAL: Pick<ViewState, 'selectedAgentId' | 'cameraX' | 'cameraY' | 'zoom' | 'paused'> = {
+const INITIAL: Pick<ViewState, 'selectedAgentId' | 'cameraX' | 'cameraY' | 'zoom'> = {
   selectedAgentId: null,
   cameraX: 0,
   cameraY: 0,
   zoom: 1.0,
-  paused: true,
 };
 
 export const useViewStore = create<ViewState>((set) => ({
@@ -45,6 +42,5 @@ export const useViewStore = create<ViewState>((set) => ({
   pan: (dx, dy) => set((s) => ({ cameraX: s.cameraX + dx, cameraY: s.cameraY + dy })),
   setCamera: (x, y) => set({ cameraX: x, cameraY: y }),
   setZoom: (z) => set({ zoom: Math.max(0.0625, Math.min(4.0, z)) }),
-  setPaused: (p) => set({ paused: p }),
   reset: () => set(INITIAL),
 }));

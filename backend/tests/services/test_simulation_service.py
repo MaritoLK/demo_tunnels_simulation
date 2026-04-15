@@ -109,6 +109,25 @@ def test_query_events_respects_limit(db_session):
     assert len(got) <= 5
 
 
+def test_query_events_without_cursor_returns_tail_not_head(db_session):
+    """§9.32 regression guard. When `since_tick` is None, `query_events`
+    must return the latest `limit` events (the tail of the stream), not
+    the oldest. Pre-fix, the /world/state live feed froze on tick-0 events
+    after ~50 ticks because the ASC+limit query truncated the head instead
+    of the tail.
+    """
+    simulation_service.create_simulation(width=5, height=5, seed=1, agent_count=3)
+    simulation_service.step_simulation(ticks=200)
+    got = simulation_service.query_events(limit=100)
+    assert len(got) == 100
+    ticks = [e.tick for e in got]
+    assert ticks == sorted(ticks), 'return order must stay ascending'
+    # Tail semantics: max tick must be the most recent (tick=199, 0-indexed).
+    # Floor at 150 rather than pinning to 199 so the test survives any future
+    # per-tick-event-count fluctuation — the point is "not stuck near zero."
+    assert max(ticks) >= 150, f'expected tail window; max_tick={max(ticks)}'
+
+
 def test_dirty_tiles_persist_depletion_after_foraged_event(db_session):
     """§9.19 dirty-set: `foraged` events drive exactly the tile rows whose
     `resource_amount` changed. Run until at least one forage lands, then
