@@ -86,3 +86,13 @@ def test_night_phase_returns_rest():
     w = _grass_world()
     a = _fresh_agent()
     assert decide_action(a, w, _colony(), 'night') == 'rest'
+
+
+def test_dawn_on_camp_full_hunger_returns_rest_not_sham_step():
+    """Guard for review issue #2: at-camp agent at dawn who can't eat
+    should rest, not emit a misleading 'headed toward camp' event."""
+    w = _grass_world()
+    a = _fresh_agent(x=0, y=0)  # on camp
+    a.hunger = needs.NEED_MAX  # can't eat
+    c = _colony()
+    assert decide_action(a, w, c, 'dawn') == 'rest'

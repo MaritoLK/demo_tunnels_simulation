@@ -52,6 +52,10 @@ def decide_action(agent, world=None, colony=None, phase=None):
 
     if colony is None:
         return _legacy_decide_action(agent)
+    if world is None:
+        # Defensive guard: new path requires world. Fall back to legacy
+        # chain rather than NPE-ing on world.get_tile in the 'day' branch.
+        return _legacy_decide_action(agent)
 
     # Survival takes precedence over any phase behavior.
     if agent.health < needs.HEALTH_CRITICAL:
@@ -66,11 +70,13 @@ def decide_action(agent, world=None, colony=None, phase=None):
     if phase == 'dusk':
         return 'step_to_camp'
     if phase == 'dawn':
-        if (colony.is_at_camp(agent.x, agent.y)
-                and agent.hunger < needs.NEED_MAX
-                and colony.food_stock >= config.EAT_COST
-                and not agent.ate_this_dawn):
-            return 'eat_camp'
+        at_camp = colony.is_at_camp(agent.x, agent.y)
+        if at_camp:
+            if (agent.hunger < needs.NEED_MAX
+                    and colony.food_stock >= config.EAT_COST
+                    and not agent.ate_this_dawn):
+                return 'eat_camp'
+            return 'rest'   # home but ineligible → rest, not a sham step
         return 'step_to_camp'
 
     # phase == 'day' — productive branches
