@@ -3,6 +3,11 @@ HUNGER_DECAY = 0.5
 ENERGY_DECAY = 0.3
 SOCIAL_DECAY = 0.1
 
+# Night-phase hunger scaling: agents decay slower while sleeping. Applied
+# in tick_agent via cycle.phase_for; keeps the constant here so needs.py
+# remains the single home for all decay-related tuning.
+NIGHT_HUNGER_SCALE = 0.5
+
 STARVATION_HEALTH_DAMAGE = 2.0
 
 # Passive health regen: a well-fed agent slowly recovers. Without this,

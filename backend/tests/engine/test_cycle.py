@@ -1,4 +1,4 @@
-from app.engine import cycle
+from app.engine import cycle, config, needs
 
 
 def test_constants_sum_to_day_length():
@@ -27,3 +27,19 @@ def test_day_for_increments_each_full_cycle():
     assert cycle.day_for(120) == 1
     assert cycle.day_for(239) == 1
     assert cycle.day_for(240) == 2
+
+
+def test_config_has_required_balance_constants():
+    assert config.HARVEST_YIELD == 9
+    assert config.INITIAL_FOOD_STOCK == 18
+    assert config.EAT_COST == 6
+    assert config.CROP_MATURE_TICKS == 60
+    assert config.WILD_RESOURCE_MAX == 5
+    assert config.WILD_TILE_DENSITY == 0.15
+    assert config.MAX_FIELDS_PER_COLONY == 4
+    # Sanity: stock divides evenly by eat cost so "1 day of reliance" is exact
+    assert config.INITIAL_FOOD_STOCK % config.EAT_COST == 0
+
+
+def test_needs_has_night_hunger_scale():
+    assert needs.NIGHT_HUNGER_SCALE == 0.5
