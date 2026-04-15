@@ -43,3 +43,24 @@ def test_config_has_required_balance_constants():
 
 def test_needs_has_night_hunger_scale():
     assert needs.NIGHT_HUNGER_SCALE == 0.5
+
+
+from app.engine.colony import EngineColony
+
+
+def test_engine_colony_defaults_and_overrides():
+    c = EngineColony(id=1, name='Red', color='#e74c3c',
+                     camp_x=3, camp_y=3, food_stock=18)
+    assert c.id == 1
+    assert c.name == 'Red'
+    assert c.color == '#e74c3c'
+    assert c.camp_x == 3 and c.camp_y == 3
+    assert c.food_stock == 18
+    assert c.growing_count == 0
+
+
+def test_engine_colony_is_at_camp():
+    c = EngineColony(id=1, name='Red', color='#e74c3c',
+                     camp_x=3, camp_y=3, food_stock=0)
+    assert c.is_at_camp(3, 3)
+    assert not c.is_at_camp(4, 3)
