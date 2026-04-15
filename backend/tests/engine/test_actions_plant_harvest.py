@@ -47,3 +47,52 @@ def test_plant_refuses_when_max_fields_reached():
     event = actions.plant(a, w, c)
     assert event['type'] == 'idled'
     assert w.get_tile(2, 2).crop_state == 'none'
+
+
+def test_plant_refuses_tile_with_wild_food():
+    # Covers the resource_amount guard in plant() that prior tests missed.
+    w = _grass_world()
+    t = w.get_tile(2, 2)
+    t.resource_type = 'food'
+    t.resource_amount = 5
+    a = Agent('A', 2, 2, agent_id=10, colony_id=1)
+    c = _fresh_colony()
+    event = actions.plant(a, w, c)
+    assert event['type'] == 'idled'
+    assert t.crop_state == 'none'
+    assert c.growing_count == 0
+
+
+def test_harvest_credits_harvester_colony_and_resets_tile():
+    w = _grass_world()
+    t = w.get_tile(2, 2)
+    t.crop_state = 'mature'
+    t.crop_growth_ticks = config.CROP_MATURE_TICKS
+    t.resource_amount = config.HARVEST_YIELD
+    t.crop_colony_id = 99  # planter colony id, *different* from harvester
+
+    a = Agent('A', 2, 2, agent_id=10, colony_id=1)
+    harvester = _fresh_colony()  # id=1
+    event = actions.harvest(a, w, harvester)
+
+    assert event['type'] == 'harvested'
+    assert event['data'] == {
+        'tile_x': 2, 'tile_y': 2,
+        'colony_id': 1,
+        'yield_amount': config.HARVEST_YIELD,
+    }
+    assert harvester.food_stock == 18 + config.HARVEST_YIELD
+    assert t.crop_state == 'none'
+    assert t.crop_growth_ticks == 0
+    assert t.crop_colony_id is None
+    assert t.resource_amount == 0
+
+
+def test_harvest_refuses_non_mature_tile():
+    w = _grass_world()
+    w.get_tile(2, 2).crop_state = 'growing'
+    a = Agent('A', 2, 2, agent_id=10, colony_id=1)
+    c = _fresh_colony()
+    event = actions.harvest(a, w, c)
+    assert event['type'] == 'idled'
+    assert c.food_stock == 18

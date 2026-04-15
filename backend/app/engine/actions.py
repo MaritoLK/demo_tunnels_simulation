@@ -194,3 +194,34 @@ def plant(agent, world, colony):
         'description': f'{agent.name} planted at ({tile.x},{tile.y})',
         'data': {'tile_x': tile.x, 'tile_y': tile.y, 'colony_id': colony.id},
     }
+
+
+def harvest(agent, world, colony):
+    """Harvest a mature crop under `agent`. Credits `colony` (the harvester).
+
+    The planter's colony is NOT credited — this is the "pure scarcity, no
+    ownership" rule from the spec. Any agent can harvest any mature tile
+    and the yield goes to their own colony's stock.
+    """
+    from . import config
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.crop_state != 'mature':
+        return {'type': 'idled', 'description': f'{agent.name} found no mature crop'}
+
+    yield_amount = config.HARVEST_YIELD
+    colony.food_stock += yield_amount
+    tile.crop_state = 'none'
+    tile.crop_growth_ticks = 0
+    tile.crop_colony_id = None
+    tile.resource_amount = 0
+
+    return {
+        'type': 'harvested',
+        'description': f'{agent.name} harvested ({tile.x},{tile.y}) → +{yield_amount} stock',
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'colony_id': colony.id,
+            'yield_amount': yield_amount,
+        },
+    }
