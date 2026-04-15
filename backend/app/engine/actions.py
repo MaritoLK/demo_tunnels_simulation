@@ -231,3 +231,42 @@ def harvest(agent, world, colony):
             'yield_amount': yield_amount,
         },
     }
+
+
+def eat_camp(agent, colony):
+    """Dawn meal at camp. Cap-fills hunger, debits colony stock by EAT_COST.
+
+    Pre-conditions:
+      * agent on own camp tile
+      * colony.food_stock >= EAT_COST
+      * agent.hunger < NEED_MAX
+      * agent has not already eaten this dawn window
+
+    Violations → idled no-op. Success → cap-fills hunger, emits
+    ate_from_cache with amount=EAT_COST, flags agent.ate_this_dawn.
+    """
+    from . import config
+    if not colony.is_at_camp(agent.x, agent.y):
+        return {'type': 'idled', 'description': f'{agent.name} not at camp'}
+    if colony.food_stock < config.EAT_COST:
+        return {'type': 'idled', 'description': f'{agent.name} found empty stock'}
+    if agent.hunger >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} already full'}
+    if agent.ate_this_dawn:
+        return {'type': 'idled', 'description': f'{agent.name} already ate this dawn'}
+
+    hunger_before = agent.hunger
+    agent.hunger = needs.NEED_MAX
+    colony.food_stock -= config.EAT_COST
+    agent.ate_this_dawn = True
+    return {
+        'type': 'ate_from_cache',
+        'description': f'{agent.name} ate at camp',
+        'data': {
+            'agent_id': agent.id,
+            'colony_id': colony.id,
+            'amount': config.EAT_COST,
+            'hunger_before': hunger_before,
+            'hunger_after': agent.hunger,
+        },
+    }
