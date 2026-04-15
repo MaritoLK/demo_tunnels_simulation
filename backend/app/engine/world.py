@@ -40,14 +40,21 @@ INITIAL_RESOURCE_AMOUNT = {
 
 
 class Tile:
-    __slots__ = ('x', 'y', 'terrain', 'resource_type', 'resource_amount')
+    __slots__ = (
+        'x', 'y', 'terrain', 'resource_type', 'resource_amount',
+        'crop_state', 'crop_growth_ticks', 'crop_colony_id',
+    )
 
-    def __init__(self, x, y, terrain, resource_type=None, resource_amount=0.0):
+    def __init__(self, x, y, terrain, resource_type=None, resource_amount=0.0,
+                 crop_state='none', crop_growth_ticks=0, crop_colony_id=None):
         self.x = x
         self.y = y
         self.terrain = terrain
         self.resource_type = resource_type
         self.resource_amount = resource_amount
+        self.crop_state = crop_state
+        self.crop_growth_ticks = crop_growth_ticks
+        self.crop_colony_id = crop_colony_id
 
     @property
     def is_walkable(self):
