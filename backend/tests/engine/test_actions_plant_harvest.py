@@ -27,7 +27,10 @@ def test_plant_converts_empty_tile_to_growing():
     assert tile.crop_colony_id == 1
     assert c.growing_count == 1
     assert event['type'] == 'planted'
-    assert event['data'] == {'tile_x': 2, 'tile_y': 2, 'colony_id': 1}
+    assert event['data'] == {
+        'tile_x': 2, 'tile_y': 2,
+        'colony_id': 1, 'agent_id': 10,
+    }
 
 
 def test_plant_refuses_already_cultivated_tile():
@@ -79,6 +82,7 @@ def test_harvest_credits_harvester_colony_and_resets_tile():
     assert event['data'] == {
         'tile_x': 2, 'tile_y': 2,
         'colony_id': 1,
+        'agent_id': 10,
         'yield_amount': config.HARVEST_YIELD,
     }
     assert harvester.food_stock == 18 + config.HARVEST_YIELD

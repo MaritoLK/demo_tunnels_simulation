@@ -192,7 +192,12 @@ def plant(agent, world, colony):
     return {
         'type': 'planted',
         'description': f'{agent.name} planted at ({tile.x},{tile.y})',
-        'data': {'tile_x': tile.x, 'tile_y': tile.y, 'colony_id': colony.id},
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'colony_id': colony.id,
+            'agent_id': agent.id,
+        },
     }
 
 
@@ -222,6 +227,7 @@ def harvest(agent, world, colony):
             'tile_x': tile.x,
             'tile_y': tile.y,
             'colony_id': colony.id,
+            'agent_id': agent.id,
             'yield_amount': yield_amount,
         },
     }
