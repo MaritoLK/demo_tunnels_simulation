@@ -18,6 +18,8 @@ dist/
 # Personal study notes
 STUDY_NOTES.md
 
+docs/
+
 #assets
 frontend/src/assets
 
