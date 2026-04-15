@@ -146,3 +146,32 @@ class World:
                     best = tile
                     best_dist = d
         return best
+
+    def tick(self, phase):
+        """World-level per-tick logic. Currently: crop growth (day phase only).
+
+        Returns a list of event dicts (e.g. `crop_matured`) emitted this
+        tick. Pure: no I/O, deterministic given tile state + phase.
+        """
+        if phase != 'day':
+            return []
+        from . import config  # local import keeps engine imports flat
+        events = []
+        for row in self.tiles:
+            for tile in row:
+                if tile.crop_state != 'growing':
+                    continue
+                tile.crop_growth_ticks += 1
+                if tile.crop_growth_ticks >= config.CROP_MATURE_TICKS:
+                    tile.crop_state = 'mature'
+                    tile.resource_amount = config.HARVEST_YIELD
+                    events.append({
+                        'type': 'crop_matured',
+                        'description': f'crop matured at ({tile.x},{tile.y})',
+                        'data': {
+                            'tile_x': tile.x,
+                            'tile_y': tile.y,
+                            'colony_id': tile.crop_colony_id,
+                        },
+                    })
+        return events
