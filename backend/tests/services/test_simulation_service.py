@@ -10,6 +10,7 @@ from app.engine.colony import EngineColony
 from app.engine.world import Tile
 from app.engine.agent import Agent
 from app.engine import config as engine_config
+from app.engine import cycle
 
 
 def _snapshot(sim):
@@ -310,6 +311,10 @@ def test_create_simulation_rejects_half_set_colony_kwargs(db_session):
     assert db.session.query(models.Colony).count() == 0
 
 
+_DAY_PHASE_START = cycle.PHASES.index('day') * cycle.TICKS_PER_PHASE
+_DAWN_PHASE_START = cycle.PHASES.index('dawn') * cycle.TICKS_PER_PHASE
+
+
 def test_step_simulation_persists_planted_tile_state(db_session):
     simulation_service.create_simulation(
         width=20, height=20, seed=1,
@@ -321,11 +326,13 @@ def test_step_simulation_persists_planted_tile_state(db_session):
     for row in sim.world.tiles:
         for t in row:
             if t.terrain == 'grass' and t.resource_amount == 0 and t.crop_state == 'none':
-                target = t; break
-        if target: break
+                target = t
+                break
+        if target:
+            break
     assert target is not None
     agent.x, agent.y = target.x, target.y
-    sim.current_tick = 30    # start of day phase
+    sim.current_tick = _DAY_PHASE_START
     simulation_service.step_simulation(ticks=1)
     row = db.session.query(models.WorldTile).filter_by(x=target.x, y=target.y).one()
     assert row.crop_state == 'growing'
@@ -343,7 +350,7 @@ def test_step_simulation_persists_harvested_stock(db_session):
     t.crop_state = 'mature'
     t.resource_amount = engine_config.HARVEST_YIELD
     t.crop_colony_id = 999
-    sim.current_tick = 30    # day phase
+    sim.current_tick = _DAY_PHASE_START
     simulation_service.step_simulation(ticks=1)
     c_row = db.session.query(models.Colony).filter_by(id=agent.colony_id).one()
     assert c_row.food_stock == engine_config.INITIAL_FOOD_STOCK + engine_config.HARVEST_YIELD
@@ -359,11 +366,13 @@ def test_step_simulation_persists_ate_from_cache_stock_debit(db_session):
     colony = sim.colonies[agent.colony_id]
     agent.x, agent.y = colony.camp_x, colony.camp_y
     agent.hunger = 50.0
-    # Move other agents away from camp so only this one eats
+    # All colony members spawn at camp (create_simulation default), so
+    # on tick 0 they would all eat — debit would be 3 * EAT_COST. Move
+    # siblings off-camp so the assertion isolates a single eat event.
     for other in sim.agents:
         if other.colony_id == colony.id and other.id != agent.id:
             other.x, other.y = 0, 0
-    sim.current_tick = 0     # dawn
+    sim.current_tick = _DAWN_PHASE_START
     initial_stock = colony.food_stock
     simulation_service.step_simulation(ticks=1)
     c_row = db.session.query(models.Colony).filter_by(id=colony.id).one()

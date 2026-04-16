@@ -224,20 +224,18 @@ def step_simulation(ticks=1):
         event_rows = [mappers.event_to_row(e) for e in events]
         db.session.add_all(event_rows)
 
-        crop_dirty_coords = {
+        dirty_tile_coords = {
             (e['data']['tile_x'], e['data']['tile_y'])
             for e in events
             if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
-            and e.get('data') and 'tile_x' in e['data']
         }
-        if crop_dirty_coords:
-            _update_dirty_tiles(sim, crop_dirty_coords)
+        if dirty_tile_coords:
+            _update_dirty_tiles(sim, dirty_tile_coords)
 
         dirty_colony_ids = {
             e['data']['colony_id']
             for e in events
             if e['type'] in ('harvested', 'ate_from_cache')
-            and e.get('data') and 'colony_id' in e['data']
         }
         if dirty_colony_ids:
             _update_dirty_colonies(sim, dirty_colony_ids)
@@ -269,14 +267,10 @@ def load_current_simulation():
     tile_rows = db.session.query(models.WorldTile).all()
     world = mappers.rows_to_world(tile_rows, state.world_width, state.world_height)
 
-    colony_rows = db.session.query(models.Colony).all()
-    engine_colonies = [mappers.row_to_colony(row) for row in colony_rows]
-
     sim = Simulation(
         world=world,
         current_tick=state.current_tick,
         seed=state.seed,
-        colonies=engine_colonies if engine_colonies else None,
     )
 
     agent_rows = db.session.query(models.Agent).all()
@@ -361,15 +355,21 @@ def _update_dirty_tiles(sim, coords):
 
 
 def _update_dirty_colonies(sim, colony_ids):
+    """Write food_stock deltas from harvested/ate_from_cache events back to DB.
+
+    Unlike `_update_agents` (agents die mid-tick, id-miss is legitimate),
+    a colony that emitted an event *must* exist in `sim.colonies` — no
+    lifecycle culls colonies. Index direct, let KeyError propagate so a
+    reload-without-colonies or engine/service drift fails loud at the
+    transaction boundary instead of silently dropping food_stock.
+    """
     rows = (
         db.session.query(models.Colony)
         .filter(models.Colony.id.in_(colony_ids))
         .all()
     )
     for row in rows:
-        engine = sim.colonies.get(row.id)
-        if engine is not None:
-            mappers.update_colony_row(row, engine)
+        mappers.update_colony_row(row, sim.colonies[row.id])
 
 
 def _update_agents(sim):
