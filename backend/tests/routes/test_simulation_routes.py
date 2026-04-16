@@ -291,3 +291,39 @@ def test_events_rejects_oversized_limit(client):
 def test_unknown_route_is_404(client):
     resp = client.get(f'{API}/nope')
     assert resp.status_code == 404
+
+
+def test_world_state_includes_sim_day_and_phase(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    resp = client.get(f'{API}/world/state')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert 'day' in body['sim']
+    assert 'phase' in body['sim']
+    assert body['sim']['phase'] == 'dawn'
+    assert body['sim']['day'] == 0
+
+
+def test_agent_includes_colony_id(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    for a in body['agents']:
+        assert 'colony_id' in a    # legacy agents have colony_id=None
+
+
+def test_tile_includes_crop_fields(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    sample = body['world']['tiles'][0][0]
+    assert 'crop_state' in sample
+    assert 'crop_growth_ticks' in sample
+    assert 'crop_colony_id' in sample

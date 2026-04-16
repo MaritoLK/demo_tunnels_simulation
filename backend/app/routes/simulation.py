@@ -179,7 +179,7 @@ def get_world_state():
     """Composite polling endpoint — one request returns the full frame.
 
     Shape:
-      { sim: {...summary...}, world: {...}, agents: [...], events: [...] }
+      { sim: {...summary...}, world: {...}, agents: [...], events: [...], colonies: [...] }
 
     `events` default: the latest `limit` events (service tails the stream
     via desc+limit+reverse; see §9.32). When `since_tick` is provided,
@@ -208,6 +208,9 @@ def get_world_state():
         'world': serializers.world_to_dict(sim.world),
         'agents': [serializers.agent_to_dict(a) for a in sim.agents],
         'events': [serializers.event_row_to_dict(r) for r in event_rows],
+        'colonies': [
+            serializers.colony_to_dict(c) for c in sim.colonies.values()
+        ],
     }, 200
 
 
