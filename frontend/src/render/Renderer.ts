@@ -35,6 +35,11 @@ export interface FrameSnapshot {
   // snapshot rather than read inside the renderer, so the renderer
   // stays a pure function of snapshot + clock.
   reducedMotion: boolean;
+  // Backend tick counter. The renderer uses tick-advance as the
+  // signal to snapshot previous positions for inter-poll
+  // interpolation. Scalar render input — not a simulation concern
+  // leaking in, same category as tilePx.
+  currentTick: number;
 }
 
 export interface Renderer {

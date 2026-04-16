@@ -108,8 +108,9 @@ export function WorldCanvas() {
       // the OS preference can toggle while the app is running, and
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
+      currentTick: sim.data?.tick ?? 0,
     };
-  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId]);
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, sim.data?.tick]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {

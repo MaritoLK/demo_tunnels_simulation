@@ -80,6 +80,23 @@ export class Canvas2DRenderer implements Renderer {
   // the procedural rect renderer (during load, on load failure, in
   // tests where the assets aren't bundled).
   private sprites: SpriteAtlas | null = null;
+  // Tick-interpolation state. All of it lives on the renderer because
+  // "how to fill the gap between two poll snapshots" is a rendering
+  // concern, not a simulation one — the engine only hands us integer
+  // tile positions.
+  //   prevPositions      — agent positions at the last tick boundary;
+  //                        lerped toward the snapshot's current position.
+  //   lastSeenPositions  — rolling shadow of positions seen on the
+  //                        most recent frame. Becomes prev on tick-advance.
+  //   lastSeenTick       — most recent tick we drew (-1 = never).
+  //   lastTickBoundaryAt — performance.now() when we last saw a tick advance.
+  //   pollIntervalMs     — EMA of inter-poll delta, seeded from the React
+  //                        Query poll interval. Controls lerp speed.
+  private prevPositions = new Map<number, { x: number; y: number }>();
+  private lastSeenPositions = new Map<number, { x: number; y: number }>();
+  private lastSeenTick = -1;
+  private lastTickBoundaryAt = 0;
+  private pollIntervalMs = 500;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -127,8 +144,46 @@ export class Canvas2DRenderer implements Renderer {
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, reducedMotion,
+      selectedAgentId, reducedMotion, currentTick,
     } = snap;
+
+    // Tick-advance bookkeeping for inter-poll interpolation. Runs
+    // before any drawing so the agent loop below can read a consistent
+    // (prevPositions, alpha) pair.
+    const now = performance.now();
+    const tickAdvanced = currentTick > this.lastSeenTick;
+    if (tickAdvanced && this.lastSeenTick >= 0) {
+      // Take the positions we drew last frame as the "prev" for this
+      // tick, then measure how long the previous tick window actually
+      // lasted so the lerp speed tracks real polling cadence.
+      this.prevPositions = new Map(this.lastSeenPositions);
+      const delta = now - this.lastTickBoundaryAt;
+      // Bound the EMA: a laptop that sleeps for a minute shouldn't
+      // pin the pollInterval at 60s. 3s covers 1 Hz sim speed with
+      // plenty of slack; anything longer is treated as "tab was idle,
+      // reseed from default" by leaving pollIntervalMs alone.
+      if (delta > 0 && delta < 3000) {
+        this.pollIntervalMs = this.pollIntervalMs * 0.7 + delta * 0.3;
+      }
+      this.lastTickBoundaryAt = now;
+    } else if (this.lastSeenTick < 0) {
+      // Very first frame — no history, no animation to unwind.
+      this.lastTickBoundaryAt = now;
+    }
+    this.lastSeenTick = currentTick;
+
+    // Prune dead/departed ids from both maps so there's no ghost draw
+    // on subsequent frames and no slow memory bloat.
+    const presentIds = new Set<number>();
+    for (const a of agents) presentIds.add(a.id);
+    for (const id of Array.from(this.lastSeenPositions.keys())) {
+      if (!presentIds.has(id)) this.lastSeenPositions.delete(id);
+    }
+    for (const id of Array.from(this.prevPositions.keys())) {
+      if (!presentIds.has(id)) this.prevPositions.delete(id);
+    }
+
+    const alpha = Math.max(0, Math.min(1, (now - this.lastTickBoundaryAt) / this.pollIntervalMs));
 
     ctx.save();
     // Background clear — match the shell ground so the canvas feels
@@ -282,8 +337,28 @@ export class Canvas2DRenderer implements Renderer {
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
     for (const a of agents) {
-      const cx = a.x * tilePx + tilePx / 2;
-      const cy = a.y * tilePx + tilePx / 2;
+      // Body position = interpolated between prev (last tick boundary)
+      // and current (this tick's target). Halo + selection ring stay
+      // on the target tile so hit-tests match the visual anchor.
+      // Snap if the agent moved more than one tile in a single tick
+      // window (teleport, multi-step tick batch) — sliding them
+      // through intermediate tiles would look like they're phasing
+      // through walls, worse than a crisp cut.
+      const prev = this.prevPositions.get(a.id);
+      let bodyX = a.x;
+      let bodyY = a.y;
+      if (prev && !reducedMotion) {
+        const dx = a.x - prev.x;
+        const dy = a.y - prev.y;
+        if (dx * dx + dy * dy <= 2) {
+          bodyX = prev.x + dx * alpha;
+          bodyY = prev.y + dy * alpha;
+        }
+      }
+      const cx = bodyX * tilePx + tilePx / 2;
+      const cy = bodyY * tilePx + tilePx / 2;
+      const targetCx = a.x * tilePx + tilePx / 2;
+      const targetCy = a.y * tilePx + tilePx / 2;
       // Floor at 4 CSS px so agents stay visible when the world is
       // auto-fit at a small zoom. Without a floor, a 40×25 world shown
       // at ~0.6 zoom renders agents as ~4-px dots that blur into the
@@ -354,11 +429,12 @@ export class Canvas2DRenderer implements Renderer {
         if (reducedMotion) {
           // Static selection ring — one solid coral circle, no halo,
           // no rotation. The user still needs to see which agent is
-          // picked; motion is the only thing we drop.
+          // picked; motion is the only thing we drop. Ring pinned to
+          // target tile (not lerped body) so it matches hit-tests.
           ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
           ctx.setLineDash([]);
           ctx.beginPath();
-          ctx.arc(cx, cy, r + ringGap, 0, Math.PI * 2);
+          ctx.arc(targetCx, targetCy, r + ringGap, 0, Math.PI * 2);
           ctx.stroke();
         } else {
           // Animated selection — two concentric dashed rings rotating
@@ -375,15 +451,18 @@ export class Canvas2DRenderer implements Renderer {
           const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
           ctx.fillStyle = `rgba(255, 123, 59, ${0.08 + pulse * 0.12})`;
           ctx.beginPath();
-          ctx.arc(cx, cy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
+          ctx.arc(targetCx, targetCy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
 
-          // Outer dashed ring — rotates clockwise.
+          // Rings anchor to the target tile, not the lerped body, so
+          // the selection indicator matches the click hit-test region
+          // instead of chasing the sprite across the interpolation
+          // window.
           const dash = Math.max(2, tilePx * 0.18);
           ctx.save();
-          ctx.translate(cx, cy);
+          ctx.translate(targetCx, targetCy);
           ctx.rotate(t * 0.6);
           ctx.setLineDash([dash, dash * 0.8]);
           ctx.beginPath();
@@ -391,9 +470,8 @@ export class Canvas2DRenderer implements Renderer {
           ctx.stroke();
           ctx.restore();
 
-          // Inner solid ring — tighter, rotates counter-clockwise.
           ctx.save();
-          ctx.translate(cx, cy);
+          ctx.translate(targetCx, targetCy);
           ctx.rotate(-t * 0.9);
           ctx.setLineDash([]);
           ctx.lineWidth = Math.max(1, tilePx * 0.08);
@@ -403,6 +481,12 @@ export class Canvas2DRenderer implements Renderer {
           ctx.restore();
         }
       }
+    }
+
+    // Fold the frame's positions into the rolling shadow map — next
+    // tick-advance turns this into prevPositions.
+    for (const a of agents) {
+      this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
     }
 
     ctx.restore();
@@ -415,6 +499,9 @@ export class Canvas2DRenderer implements Renderer {
     this.host = null;
     this.lastWidthPx = -1;
     this.lastHeightPx = -1;
+    this.prevPositions.clear();
+    this.lastSeenPositions.clear();
+    this.lastSeenTick = -1;
   }
 }
 
