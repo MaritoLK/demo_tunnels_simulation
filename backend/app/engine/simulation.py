@@ -94,7 +94,7 @@ class Simulation:
     def step(self):
         events = []
         phase = cycle.phase_for(self.current_tick)
-        self._recompute_growing_counts()
+        self.recompute_growing_counts()
         snapshot = list(self.agents)
         if self.colonies:
             # Colony-aware: thread phase + colonies through the new tick_agent path.
@@ -126,7 +126,7 @@ class Simulation:
         self.current_tick += 1
         return events
 
-    def _recompute_growing_counts(self):
+    def recompute_growing_counts(self):
         """Re-derive `colony.growing_count` from tile state.
         Called at the start of each `step`. O(tiles) per tick."""
         counts = {cid: 0 for cid in self.colonies}

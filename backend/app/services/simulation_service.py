@@ -270,21 +270,16 @@ def load_current_simulation():
     colony_rows = db.session.query(models.Colony).order_by(models.Colony.id).all()
     engine_colonies = [mappers.row_to_colony(r) for r in colony_rows]
 
-    # growing_count is authoritative at step boundaries (Simulation._recompute_
-    # growing_counts on every step, T12 contract) but the counter itself isn't
-    # persisted — rebuild it from the tile rows we just loaded. Same
-    # arithmetic Simulation.step() runs at the top of each tick.
-    by_id = {c.id: c for c in engine_colonies}
-    for row in tile_rows:
-        if row.crop_state == 'growing' and row.crop_colony_id in by_id:
-            by_id[row.crop_colony_id].growing_count += 1
-
     sim = Simulation(
         world=world,
         current_tick=state.current_tick,
         seed=state.seed,
         colonies=engine_colonies,
     )
+    # growing_count isn't persisted (derived state, T12 contract). Delegate
+    # to the engine's own recompute so service + step() share one definition
+    # — if the growing rule ever changes, both sites follow.
+    sim.recompute_growing_counts()
 
     agent_rows = db.session.query(models.Agent).all()
     for row in agent_rows:

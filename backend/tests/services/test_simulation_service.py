@@ -391,3 +391,7 @@ def test_load_current_simulation_restores_colonies(db_session):
     # growing_count is recomputed from tiles after reload.
     for c in sim.colonies.values():
         assert c.growing_count >= 0
+    # T19 contract: reloaded sim must step without KeyError if a
+    # harvest/eat event fires (_update_dirty_colonies indexes sim.colonies
+    # direct). step_simulation re-seats the cache via get_current_simulation.
+    simulation_service.step_simulation(ticks=1)
