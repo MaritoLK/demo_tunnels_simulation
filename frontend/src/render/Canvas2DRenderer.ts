@@ -123,7 +123,7 @@ export class Canvas2DRenderer implements Renderer {
     if (!this.canvas || !this.ctx) return;
     const { ctx } = this;
     const {
-      width, height, tiles, agents, tilePx, cameraX, cameraY,
+      width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
       selectedAgentId, reducedMotion,
     } = snap;
 
@@ -192,6 +192,48 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
+    // Camp markers — one colored square per colony, drawn above terrain
+    // so the camp reads as a built object, below agents so the occupant
+    // covers their own tile. Inset 2px so the border doesn't kiss the
+    // neighbour tile and the square reads as "this tile, not the edge".
+    for (const colony of colonies) {
+      const px = colony.camp_x * tilePx;
+      const py = colony.camp_y * tilePx;
+      ctx.fillStyle = colony.color;
+      ctx.globalAlpha = 0.9;
+      ctx.fillRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+      ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = Math.max(1, tilePx * 0.06);
+      ctx.strokeRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+    }
+
+    // Crop overlay — binary sprout/mature dot per cultivated tile. Drawn
+    // after camps so a planted camp tile (rare) shows the crop on top.
+    for (let y = 0; y < height; y++) {
+      const row = tiles[y];
+      if (!row) continue;
+      for (let x = 0; x < width; x++) {
+        const t = row[x];
+        if (!t || t.crop_state === 'none') continue;
+        const ccx = x * tilePx + tilePx / 2;
+        const ccy = y * tilePx + tilePx / 2;
+        const cr = Math.max(2, tilePx * 0.22);
+        ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+        ctx.beginPath();
+        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.06);
+        ctx.stroke();
+      }
+    }
+
+    // Colony color lookup — O(1) per agent in the loop below. Built once
+    // per frame; colonies array is small (<=4) so this is negligible.
+    const colonyColorById = new Map<number, string>();
+    for (const c of colonies) colonyColorById.set(c.id, c.color);
+
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
     for (const a of agents) {
@@ -246,6 +288,18 @@ export class Canvas2DRenderer implements Renderer {
         ctx.beginPath();
         ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.35, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // Colony halo — a colored ring above the head says "this agent is
+      // Red's". Applied to both sprite and procedural paths; the ring is
+      // small and high so it doesn't fight the body silhouette.
+      const colonyColor = a.colony_id != null ? colonyColorById.get(a.colony_id) : undefined;
+      if (colonyColor) {
+        ctx.strokeStyle = colonyColor;
+        ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
+        ctx.beginPath();
+        ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
+        ctx.stroke();
       }
 
       if (a.id === selectedAgentId) {

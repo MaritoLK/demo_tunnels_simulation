@@ -26,6 +26,7 @@ type CtxSpy = {
   scale: ReturnType<typeof vi.fn>;
   setTransform: ReturnType<typeof vi.fn>;
   fillRect: ReturnType<typeof vi.fn>;
+  strokeRect: ReturnType<typeof vi.fn>;
   fill: ReturnType<typeof vi.fn>;
   stroke: ReturnType<typeof vi.fn>;
   beginPath: ReturnType<typeof vi.fn>;
@@ -35,6 +36,7 @@ type CtxSpy = {
   fillStyle: string;
   strokeStyle: string;
   lineWidth: number;
+  globalAlpha: number;
   imageSmoothingEnabled: boolean;
 };
 
@@ -47,6 +49,7 @@ function makeCtxSpy(): CtxSpy {
     scale: vi.fn(),
     setTransform: vi.fn(),
     fillRect: vi.fn(),
+    strokeRect: vi.fn(),
     fill: vi.fn(),
     stroke: vi.fn(),
     beginPath: vi.fn(),
@@ -56,6 +59,7 @@ function makeCtxSpy(): CtxSpy {
     fillStyle: '',
     strokeStyle: '',
     lineWidth: 0,
+    globalAlpha: 1,
     imageSmoothingEnabled: false,
   };
 }
@@ -85,6 +89,7 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
         colony_id: null,
       },
     ],
+    colonies: [],
     tilePx: 32,
     cameraX: 0,
     cameraY: 0,
@@ -138,6 +143,46 @@ describe('Canvas2DRenderer — reduced motion', () => {
     r.drawFrame(makeSnap({ reducedMotion: true }));
     // At minimum: body arc + body outline stroke + selection ring arc + ring stroke.
     expect(ctxSpy.stroke.mock.calls.length).toBeGreaterThanOrEqual(2);
+    r.dispose();
+  });
+});
+
+describe('Canvas2DRenderer — colony decorations', () => {
+  let ctxSpy: CtxSpy;
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    ctxSpy = makeCtxSpy();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      () => ctxSpy as unknown as CanvasRenderingContext2D,
+    );
+    host = document.createElement('div');
+    document.body.appendChild(host);
+  });
+
+  it('draws a camp square for each colony (fillRect + strokeRect)', () => {
+    // Camps are inset squares: one fillRect + one strokeRect per colony.
+    // With the 1x1 default world the only fillRect the renderer emits
+    // (in the procedural fallback path) is the background clear + camp,
+    // so strokeRect is the cleaner signal.
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(32, 32);
+    r.drawFrame(makeSnap({
+      colonies: [
+        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0 },
+      ],
+    }));
+    expect(ctxSpy.strokeRect).toHaveBeenCalledTimes(1);
+    r.dispose();
+  });
+
+  it('does not draw camp markers when colonies list is empty', () => {
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(32, 32);
+    r.drawFrame(makeSnap());
+    expect(ctxSpy.strokeRect).not.toHaveBeenCalled();
     r.dispose();
   });
 });

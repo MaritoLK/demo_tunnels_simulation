@@ -15,13 +15,14 @@
 //     references to it past the call.
 //   - dispose() tears down any owned resources (event listeners, GL
 //     contexts, RAF handles).
-import type { Agent, Tile } from '../api/types';
+import type { Agent, Colony, Tile } from '../api/types';
 
 export interface FrameSnapshot {
   width: number; // world width in tiles
   height: number; // world height in tiles
   tiles: Tile[][]; // tiles[y][x]
   agents: Agent[];
+  colonies: Colony[];
   // Camera + UI state, resolved at frame-prep time so the renderer
   // is a pure function of snapshot → pixels.
   tilePx: number; // effective tile size in CSS pixels (zoom applied)
