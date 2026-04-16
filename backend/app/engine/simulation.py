@@ -168,6 +168,15 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
         raise ValueError(
             f'agent_count={agent_count} exceeds min(world_cells={width * height}, MAX_AGENTS={MAX_AGENTS})'
         )
+    # Colony kwargs travel as a pair: either both set (colony-aware spawn)
+    # or both None (legacy agent_count spawn). Half-set routes silently to
+    # the wrong branch and blows up 3 frames deep in tick_agent's missing-
+    # colony_id invariant — fail loud at the seam instead.
+    if (colonies is None) != (agents_per_colony is None):
+        raise ValueError(
+            'colonies and agents_per_colony must be passed together; '
+            f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
+        )
     world = World(width, height)
     world.generate(seed=seed)
     sim = Simulation(world, seed=seed, colonies=colonies)
