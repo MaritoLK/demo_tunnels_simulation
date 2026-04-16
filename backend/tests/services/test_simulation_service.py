@@ -264,14 +264,6 @@ def test_agent_mapping_preserves_colony_id():
     assert back.colony_id == 3
 
 
-DEFAULT_COLONY_PALETTE = [
-    ('Red',    '#e74c3c'),
-    ('Blue',   '#3498db'),
-    ('Green',  '#2ecc71'),
-    ('Yellow', '#f1c40f'),
-]
-
-
 def test_create_simulation_spawns_four_colonies_at_corners(db_session):
     simulation_service.create_simulation(
         width=20, height=20, seed=1,
@@ -283,7 +275,7 @@ def test_create_simulation_spawns_four_colonies_at_corners(db_session):
     got = [(r.camp_x, r.camp_y) for r in rows]
     assert got == expected
     palette = [(r.name, r.color) for r in rows]
-    assert palette == DEFAULT_COLONY_PALETTE
+    assert palette == simulation_service.DEFAULT_COLONY_PALETTE
     from app.engine import config
     for r in rows:
         assert r.food_stock == config.INITIAL_FOOD_STOCK
@@ -300,3 +292,18 @@ def test_create_simulation_distributes_agents_across_colonies(db_session):
     assert len(counts) == 4
     for _, n in counts.items():
         assert n == 3
+
+
+def test_create_simulation_rejects_half_set_colony_kwargs(db_session):
+    # colonies=K without agents_per_colony would previously fall through to
+    # the legacy branch *after* flushing Colony rows — orphan-colony sim.
+    with pytest.raises(ValueError, match='must be passed together'):
+        simulation_service.create_simulation(
+            width=20, height=20, seed=1, colonies=4,
+        )
+    with pytest.raises(ValueError, match='must be passed together'):
+        simulation_service.create_simulation(
+            width=20, height=20, seed=1, agents_per_colony=3,
+        )
+    # And no Colony rows were flushed — guard runs before side effects.
+    assert db.session.query(models.Colony).count() == 0

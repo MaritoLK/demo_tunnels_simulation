@@ -136,6 +136,15 @@ def create_simulation(width, height, seed=None, agent_count=0,
     """
     global _current_sim
 
+    # Colony kwargs travel as a pair. Half-set previously fell silently to
+    # the legacy branch after already flushing Colony rows — loud at the
+    # seam instead (mirrors the engine-layer guard in new_simulation).
+    if bool(colonies) != (agents_per_colony is not None):
+        raise ValueError(
+            'colonies and agents_per_colony must be passed together; '
+            f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
+        )
+
     try:
         db.session.query(models.Event).delete()
         db.session.query(models.Agent).delete()
