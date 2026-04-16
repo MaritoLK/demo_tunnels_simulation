@@ -377,3 +377,17 @@ def test_step_simulation_persists_ate_from_cache_stock_debit(db_session):
     simulation_service.step_simulation(ticks=1)
     c_row = db.session.query(models.Colony).filter_by(id=colony.id).one()
     assert c_row.food_stock == initial_stock - engine_config.EAT_COST
+
+
+def test_load_current_simulation_restores_colonies(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    simulation_service.step_simulation(ticks=5)
+    simulation_service._reset_cache()
+    sim = simulation_service.load_current_simulation()
+    assert len(sim.colonies) == 4
+    # growing_count is recomputed from tiles after reload.
+    for c in sim.colonies.values():
+        assert c.growing_count >= 0
