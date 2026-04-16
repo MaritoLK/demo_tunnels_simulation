@@ -217,3 +217,12 @@ def test_event_fk_restricts_agent_delete(db_session):
     # SQLSTATE; asserting it documents the contract exactly.
     assert exc_info.value.orig.pgcode == '23001'
     db.session.rollback()
+
+
+def test_colony_model_imports_and_has_expected_columns(db_session):
+    c = models.Colony(name='Red', color='#e74c3c', camp_x=3, camp_y=3, food_stock=18)
+    db.session.add(c)
+    db.session.flush()
+    assert c.id is not None
+    assert c.name == 'Red'
+    assert c.food_stock == 18
