@@ -1,5 +1,6 @@
 from app import models
 from app.engine.agent import Agent as EngineAgent
+from app.engine.colony import EngineColony
 from app.engine.world import Tile as EngineTile, World as EngineWorld
 
 
@@ -16,11 +17,12 @@ def agent_to_row(agent):
         health=agent.health,
         age=agent.age,
         alive=agent.alive,
+        colony_id=agent.colony_id,
     )
 
 
 def row_to_agent(row):
-    a = EngineAgent(name=row.name, x=row.x, y=row.y, agent_id=row.id)
+    a = EngineAgent(name=row.name, x=row.x, y=row.y, agent_id=row.id, colony_id=row.colony_id)
     a.state = row.state
     a.hunger = row.hunger
     a.energy = row.energy
@@ -34,6 +36,7 @@ def row_to_agent(row):
 def update_agent_row(row, engine_agent):
     """Copy mutable per-tick fields from engine agent onto its ORM row.
     `name` and `id` are immutable post-spawn — omit them.
+    `colony_id` is immutable post-spawn — omit it.
     """
     row.x = engine_agent.x
     row.y = engine_agent.y
@@ -53,6 +56,9 @@ def tile_to_row(tile):
         terrain=tile.terrain,
         resource_type=tile.resource_type,
         resource_amount=tile.resource_amount,
+        crop_state=tile.crop_state,
+        crop_growth_ticks=tile.crop_growth_ticks,
+        crop_colony_id=tile.crop_colony_id,
     )
 
 
@@ -76,14 +82,21 @@ def row_to_tile(row):
         terrain=row.terrain,
         resource_type=row.resource_type,
         resource_amount=row.resource_amount,
+        crop_state=row.crop_state,
+        crop_growth_ticks=row.crop_growth_ticks,
+        crop_colony_id=row.crop_colony_id,
     )
 
 
 def update_tile_row(row, engine_tile):
-    """Only resource_amount is mutable post-generation (drops on forage).
+    """Resource_amount is mutable post-generation (drops on forage).
+    Crop fields are mutable post-planting (growth ticks increment, state/colony change on harvest).
     Terrain/coords are immutable for a given world.
     """
     row.resource_amount = engine_tile.resource_amount
+    row.crop_state = engine_tile.crop_state
+    row.crop_growth_ticks = engine_tile.crop_growth_ticks
+    row.crop_colony_id = engine_tile.crop_colony_id
 
 
 def rows_to_world(tile_rows, width, height):
@@ -124,3 +137,34 @@ def events_to_row_mappings(events):
         }
         for e in events
     ]
+
+
+def colony_to_row(c):
+    """Convert an EngineColony to a models.Colony ORM row."""
+    return models.Colony(
+        id=c.id,
+        name=c.name,
+        color=c.color,
+        camp_x=c.camp_x,
+        camp_y=c.camp_y,
+        food_stock=c.food_stock,
+    )
+
+
+def row_to_colony(row):
+    """Convert a models.Colony ORM row to an EngineColony."""
+    return EngineColony(
+        id=row.id,
+        name=row.name,
+        color=row.color,
+        camp_x=row.camp_x,
+        camp_y=row.camp_y,
+        food_stock=row.food_stock,
+    )
+
+
+def update_colony_row(row, engine_colony):
+    """Copy mutable per-tick fields from engine colony onto its ORM row.
+    Only food_stock changes during simulation; all other fields are immutable post-creation.
+    """
+    row.food_stock = engine_colony.food_stock

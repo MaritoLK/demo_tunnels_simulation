@@ -4,8 +4,11 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from app import db, models
-from app.services import simulation_service
+from app.services import simulation_service, mappers
 from app.services.exceptions import SimulationNotFoundError
+from app.engine.colony import EngineColony
+from app.engine.world import Tile
+from app.engine.agent import Agent
 
 
 def _snapshot(sim):
@@ -226,3 +229,36 @@ def test_colony_model_imports_and_has_expected_columns(db_session):
     assert c.id is not None
     assert c.name == 'Red'
     assert c.food_stock == 18
+
+
+def test_colony_to_row_and_back_round_trip():
+    ec = EngineColony(id=None, name='Red', color='#e74c3c',
+                      camp_x=3, camp_y=3, food_stock=18)
+    row = mappers.colony_to_row(ec)
+    assert row.name == 'Red'
+    assert row.food_stock == 18
+    # round-trip
+    restored = mappers.row_to_colony(row)
+    assert restored.name == ec.name
+    assert restored.camp_x == ec.camp_x
+    assert restored.food_stock == ec.food_stock
+
+
+def test_tile_mapping_preserves_crop_fields():
+    t = Tile(x=1, y=2, terrain='grass',
+             crop_state='growing', crop_growth_ticks=15, crop_colony_id=7)
+    row = mappers.tile_to_row(t)
+    assert row.crop_state == 'growing'
+    assert row.crop_growth_ticks == 15
+    assert row.crop_colony_id == 7
+    back = mappers.row_to_tile(row)
+    assert back.crop_state == 'growing'
+    assert back.crop_colony_id == 7
+
+
+def test_agent_mapping_preserves_colony_id():
+    a = Agent('A', 0, 0, agent_id=None, colony_id=3)
+    row = mappers.agent_to_row(a)
+    assert row.colony_id == 3
+    back = mappers.row_to_agent(row)
+    assert back.colony_id == 3
