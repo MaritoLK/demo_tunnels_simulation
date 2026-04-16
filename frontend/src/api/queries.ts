@@ -31,6 +31,7 @@ import {
 import { ApiError, apiGet, apiSend } from './client';
 import type {
   Agent,
+  Colony,
   EventRow,
   SimControlUpdate,
   SimulationSummary,
@@ -96,6 +97,16 @@ export function useAgents(
   return useQuery<WorldStateResponse, Error, Agent[]>({
     ...worldStateQuery(),
     select: (d) => d.agents,
+    ...opts,
+  });
+}
+
+export function useColonies(
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, Colony[]>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<WorldStateResponse, Error, Colony[]>({
+    ...worldStateQuery(),
+    select: (d) => d.colonies,
     ...opts,
   });
 }

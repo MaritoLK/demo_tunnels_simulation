@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { ApiError } from './api/client';
 import {
+  useColonies,
   useCreateSimulation,
   useSimControl,
   useSimulation,
@@ -9,6 +10,7 @@ import {
 } from './api/queries';
 import { AgentPanel } from './components/AgentPanel';
 import { ClockWidget } from './components/ClockWidget';
+import { ColonyPanel } from './components/ColonyPanel';
 import { EmptyState } from './components/EmptyState';
 import { EventLog } from './components/EventLog';
 import { WorldCanvas } from './components/WorldCanvas';
@@ -17,6 +19,7 @@ import { nextTickPulseState } from './state/tickPulse';
 
 export function App() {
   const sim = useSimulation();
+  const colonies = useColonies();
   const createSim = useCreateSimulation();
   const stepSim = useStepSimulation();
   const simControl = useSimControl();
@@ -147,6 +150,8 @@ export function App() {
             <p className="readout"><span className="state--error">connection error</span></p>
           )}
         </section>
+
+        <ColonyPanel colonies={colonies.data ?? []} />
 
         <AgentPanel />
 
