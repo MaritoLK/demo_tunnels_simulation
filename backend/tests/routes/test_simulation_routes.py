@@ -314,7 +314,11 @@ def test_agent_includes_colony_id(client, db_session):
     }), content_type='application/json')
     body = client.get(f'{API}/world/state').get_json()
     for a in body['agents']:
-        assert 'colony_id' in a    # legacy agents have colony_id=None
+        # Legacy agent_count path: agents spawn unaffiliated. Asserting
+        # `is None` (not just key-present) catches a future regression
+        # where the field leaks a stale int — which the frontend would
+        # then index into a colony map with no matching entry.
+        assert a['colony_id'] is None
 
 
 def test_tile_includes_crop_fields(client, db_session):
@@ -327,6 +331,23 @@ def test_tile_includes_crop_fields(client, db_session):
     assert 'crop_state' in sample
     assert 'crop_growth_ticks' in sample
     assert 'crop_colony_id' in sample
+
+
+def test_put_rejects_half_set_colony_kwargs(client, db_session):
+    # Route-layer gate (1 of 3) for the paired-kwargs invariant. Must 400
+    # before `create_simulation` runs, because that service call's first
+    # act is a DELETE cascade across every sim table — passing through
+    # silently here would wipe state before the service raised.
+    resp = _put(client, {
+        'width': 10, 'height': 10, 'seed': 1,
+        'colonies': 4,    # agents_per_colony deliberately omitted
+    })
+    assert resp.status_code == 400
+    resp = _put(client, {
+        'width': 10, 'height': 10, 'seed': 1,
+        'agents_per_colony': 3,    # colonies deliberately omitted
+    })
+    assert resp.status_code == 400
 
 
 def test_world_state_includes_colonies_array(client, db_session):

@@ -112,18 +112,24 @@ def replace_simulation():
         body.get('agents_per_colony'), 'agents_per_colony',
         min=0, max=10, allow_none=True,
     )
+
+    # Gate 1 of 3 for the paired-kwargs invariant (service + engine are the
+    # downstream gates). Must stay above `create_simulation` — that call's
+    # first act is `DELETE FROM ...` on every sim table, so a silent pass-
+    # through here would wipe state before the service raised. Form matches
+    # the engine-layer guard at `new_simulation` for pattern consistency.
+    if (colonies is None) != (agents_per_colony is None):
+        _bad(
+            'colonies and agents_per_colony must be passed together',
+            field='colonies/agents_per_colony',
+            colonies=colonies, agents_per_colony=agents_per_colony,
+        )
+
     agent_count = None
     if not colonies:
         agent_count = _require_int(
             body.get('agent_count', 0), 'agent_count',
             min=0, max=min(width * height, MAX_AGENTS),
-        )
-
-    if bool(colonies) != (agents_per_colony is not None):
-        _bad(
-            'colonies and agents_per_colony must be passed together',
-            field='colonies/agents_per_colony',
-            colonies=colonies, agents_per_colony=agents_per_colony,
         )
 
     sim = simulation_service.create_simulation(
@@ -231,7 +237,8 @@ def get_world_state():
         'agents': [serializers.agent_to_dict(a) for a in sim.agents],
         'events': [serializers.event_row_to_dict(r) for r in event_rows],
         'colonies': [
-            serializers.colony_to_dict(c) for c in sim.colonies.values()
+            serializers.colony_to_dict(c)
+            for c in sorted(sim.colonies.values(), key=lambda c: c.id)
         ],
     }, 200
 

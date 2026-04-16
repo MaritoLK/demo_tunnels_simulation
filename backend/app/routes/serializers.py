@@ -49,7 +49,7 @@ def colony_to_dict(colony):
         'camp_x': colony.camp_x,
         'camp_y': colony.camp_y,
         'food_stock': colony.food_stock,
-        'growing_count': getattr(colony, 'growing_count', 0),
+        'growing_count': colony.growing_count,
     }
 
 
