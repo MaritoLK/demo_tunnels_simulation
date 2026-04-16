@@ -100,7 +100,7 @@ def _reset_cache():
 DEFAULT_COLONY_PALETTE = [
     ('Red',    '#e74c3c'),
     ('Blue',   '#3498db'),
-    ('Green',  '#2ecc71'),
+    ('Purple', '#9b59b6'),
     ('Yellow', '#f1c40f'),
 ]
 

@@ -31,9 +31,9 @@ TERRAIN_WEIGHTS = {
 BIOME_SEEDS_PER_TILE = 0.04
 MIN_BIOME_SEEDS = 6  # floor for tiny worlds so even 4×4 gets variety
 
-FOOD_ON_GRASS_CHANCE = 0.30
+FOOD_ON_GRASS_CHANCE = 0.12
 INITIAL_RESOURCE_AMOUNT = {
-    'food': 20.0,
+    'food': 10.0,
     'wood': 15.0,
     'stone': 10.0,
 }

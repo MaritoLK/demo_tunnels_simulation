@@ -25,6 +25,9 @@
 import type { Renderer, FrameSnapshot } from './Renderer';
 import type { Terrain } from '../api/types';
 import {
+  BUSH_FRAME_PX,
+  HOUSE_FRAME_H,
+  HOUSE_FRAME_W,
   loadSprites,
   SOURCE_TILE_PX,
   TERRAIN_DECORATION,
@@ -192,24 +195,55 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Camp markers — one colored square per colony, drawn above terrain
-    // so the camp reads as a built object, below agents so the occupant
-    // covers their own tile. Inset 2px so the border doesn't kiss the
-    // neighbour tile and the square reads as "this tile, not the edge".
+    // Camp markers — house sprite when atlas is loaded, colored square
+    // fallback otherwise. Drawn above terrain so the camp reads as a
+    // built object, below agents so the occupant covers their own tile.
+    // The house is blitted oversized (2 tiles wide × 3 tall) and anchored
+    // so its base sits on the camp tile — same pattern as pawns, so the
+    // building stands on the ground rather than hovering over it.
     for (const colony of colonies) {
       const px = colony.camp_x * tilePx;
       const py = colony.camp_y * tilePx;
-      ctx.fillStyle = colony.color;
-      ctx.globalAlpha = 0.9;
-      ctx.fillRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
-      ctx.globalAlpha = 1.0;
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = Math.max(1, tilePx * 0.06);
-      ctx.strokeRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+      const houseSprite = sprites ? sprites.houses[colony.name] : undefined;
+      if (sprites && houseSprite) {
+        const houseW = tilePx * 2;
+        const houseH = tilePx * (HOUSE_FRAME_H / HOUSE_FRAME_W) * 2;
+        const houseX = px + tilePx / 2 - houseW / 2;
+        const houseY = py + tilePx - houseH;
+        ctx.drawImage(
+          houseSprite,
+          0, 0, HOUSE_FRAME_W, HOUSE_FRAME_H,
+          houseX, houseY, houseW, houseH,
+        );
+        // Thin colored halo ring under the house so team reading still
+        // works even with the building obscuring the tile itself.
+        ctx.strokeStyle = colony.color;
+        ctx.lineWidth = Math.max(1.5, tilePx * 0.1);
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.ellipse(
+          px + tilePx / 2, py + tilePx * 0.9,
+          tilePx * 0.55, tilePx * 0.2,
+          0, 0, Math.PI * 2,
+        );
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+      } else {
+        ctx.fillStyle = colony.color;
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+        ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.06);
+        ctx.strokeRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+      }
     }
 
-    // Crop overlay — binary sprout/mature dot per cultivated tile. Drawn
-    // after camps so a planted camp tile (rare) shows the crop on top.
+    // Crop overlay. Growing → small bush sprite at ~50% tile scale so a
+    // sprout reads as a young plant, not a grass-colored dot colliding
+    // with grass terrain. Mature → yellow fill dot (no asset in the free
+    // pack conveys "ripe crop" better than a gold pip). Falls back to
+    // the dot-pair in the procedural path for headless tests.
     for (let y = 0; y < height; y++) {
       const row = tiles[y];
       if (!row) continue;
@@ -218,14 +252,25 @@ export class Canvas2DRenderer implements Renderer {
         if (!t || t.crop_state === 'none') continue;
         const ccx = x * tilePx + tilePx / 2;
         const ccy = y * tilePx + tilePx / 2;
-        const cr = Math.max(2, tilePx * 0.22);
-        ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
-        ctx.beginPath();
-        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-        ctx.lineWidth = Math.max(1, tilePx * 0.06);
-        ctx.stroke();
+        if (sprites && t.crop_state === 'growing') {
+          const bushSize = tilePx * 0.55;
+          const bushX = ccx - bushSize / 2;
+          const bushY = ccy - bushSize / 2;
+          ctx.drawImage(
+            sprites.bush,
+            0, 0, BUSH_FRAME_PX, BUSH_FRAME_PX,
+            bushX, bushY, bushSize, bushSize,
+          );
+        } else {
+          const cr = Math.max(2, tilePx * 0.22);
+          ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+          ctx.beginPath();
+          ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          ctx.lineWidth = Math.max(1, tilePx * 0.06);
+          ctx.stroke();
+        }
       }
     }
 

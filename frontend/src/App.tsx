@@ -24,10 +24,11 @@ export function App() {
   const stepSim = useStepSimulation();
   const simControl = useSimControl();
 
-  const [width, setWidth] = useState(40);
-  const [height, setHeight] = useState(25);
+  const [width, setWidth] = useState(60);
+  const [height, setHeight] = useState(60);
   const [seed, setSeed] = useState(42);
-  const [agentCount, setAgentCount] = useState(5);
+  const [colonyCount, setColonyCount] = useState(4);
+  const [agentsPerColony, setAgentsPerColony] = useState(3);
   const [steps, setSteps] = useState(1);
 
   // Tick pulse — the one bit of attention-grabbing motion. Everything else
@@ -65,10 +66,19 @@ export function App() {
           <LabeledNumber label="width" value={width} onChange={setWidth} />
           <LabeledNumber label="height" value={height} onChange={setHeight} />
           <LabeledNumber label="seed" value={seed} onChange={setSeed} />
-          <LabeledNumber label="agents" value={agentCount} onChange={setAgentCount} />
+          <LabeledNumber label="colonies" value={colonyCount} onChange={setColonyCount} />
+          <LabeledNumber label="agents/colony" value={agentsPerColony} onChange={setAgentsPerColony} />
           <button
             className="btn btn--primary"
-            onClick={() => createSim.mutate({ width, height, seed, agent_count: agentCount })}
+            onClick={() =>
+              createSim.mutate({
+                width,
+                height,
+                seed,
+                colonies: colonyCount,
+                agents_per_colony: agentsPerColony,
+              })
+            }
             disabled={createSim.isPending}
           >
             <span className="btn__ico">✦</span>

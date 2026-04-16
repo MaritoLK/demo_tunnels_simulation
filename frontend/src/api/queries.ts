@@ -164,6 +164,8 @@ export interface CreateSimArgs {
   height: number;
   seed?: number;
   agent_count?: number;
+  colonies?: number;
+  agents_per_colony?: number;
 }
 
 export function useCreateSimulation() {
