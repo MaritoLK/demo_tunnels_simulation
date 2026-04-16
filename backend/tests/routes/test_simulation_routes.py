@@ -327,3 +327,18 @@ def test_tile_includes_crop_fields(client, db_session):
     assert 'crop_state' in sample
     assert 'crop_growth_ticks' in sample
     assert 'crop_colony_id' in sample
+
+
+def test_world_state_includes_colonies_array(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'colonies': 4, 'agents_per_colony': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    assert 'colonies' in body
+    assert len(body['colonies']) == 4
+    c0 = body['colonies'][0]
+    assert set(c0.keys()) >= {
+        'id', 'name', 'color', 'camp_x', 'camp_y',
+        'food_stock', 'growing_count',
+    }

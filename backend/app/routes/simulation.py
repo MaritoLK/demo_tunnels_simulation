@@ -82,6 +82,10 @@ def replace_simulation():
 
     PUT (not POST + 201) because there is no addressable new resource —
     this wipes and rebuilds the singleton. See §9.21.
+
+    Two mutually-exclusive calling shapes:
+      * Legacy: `agent_count=N` (pre-cultivation, no colony system).
+      * Colonies: `colonies=K, agents_per_colony=M` (4-colony demo layout).
     """
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -95,20 +99,38 @@ def replace_simulation():
             field='width*height',
         )
 
-    agent_count = _require_int(
-        body.get('agent_count', 0),
-        'agent_count',
-        min=0,
-        max=min(width * height, MAX_AGENTS),
-    )
-
     seed = _require_int(
         body.get('seed'), 'seed',
         min=_INT64_MIN, max=_INT64_MAX, allow_none=True,
     )
 
+    colonies = _require_int(
+        body.get('colonies'), 'colonies',
+        min=0, max=4, allow_none=True,
+    )
+    agents_per_colony = _require_int(
+        body.get('agents_per_colony'), 'agents_per_colony',
+        min=0, max=10, allow_none=True,
+    )
+    agent_count = None
+    if not colonies:
+        agent_count = _require_int(
+            body.get('agent_count', 0), 'agent_count',
+            min=0, max=min(width * height, MAX_AGENTS),
+        )
+
+    if bool(colonies) != (agents_per_colony is not None):
+        _bad(
+            'colonies and agents_per_colony must be passed together',
+            field='colonies/agents_per_colony',
+            colonies=colonies, agents_per_colony=agents_per_colony,
+        )
+
     sim = simulation_service.create_simulation(
-        width=width, height=height, seed=seed, agent_count=agent_count,
+        width=width, height=height, seed=seed,
+        colonies=colonies or 0,
+        agents_per_colony=agents_per_colony,
+        agent_count=agent_count,
     )
     control = simulation_service.get_simulation_control()
     return serializers.simulation_summary(sim, control), 200
