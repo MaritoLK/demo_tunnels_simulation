@@ -204,11 +204,12 @@ def step_simulation(ticks=1):
 
     Persisted per step:
       * new Event rows (one per engine event)
-      * updated WorldTile rows (only tiles whose resource_amount changed,
-        derived from 'foraged' event payloads)
-      * updated Agent rows (every agent that's alive, since position /
-        needs mutate every tick)
-      * SimulationState.current_tick bumped; RNG sub-stream states snapshotted
+      * updated WorldTile rows — tiles dirtied by foraged/planted/harvested/
+        crop_matured events (resource_amount, crop_state, crop_growth_ticks,
+        crop_colony_id)
+      * updated Colony rows — food_stock deltas from harvested/ate_from_cache
+      * updated Agent rows — alive agents mutate each tick
+      * SimulationState — current_tick + RNG sub-stream snapshots
     """
     if not isinstance(ticks, int) or ticks < 1:
         raise ValueError(f'ticks must be a positive int, got {ticks!r}')
@@ -223,13 +224,23 @@ def step_simulation(ticks=1):
         event_rows = [mappers.event_to_row(e) for e in events]
         db.session.add_all(event_rows)
 
-        dirty_tile_coords = {
+        crop_dirty_coords = {
             (e['data']['tile_x'], e['data']['tile_y'])
             for e in events
-            if e['type'] == 'foraged'
+            if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
+            and e.get('data') and 'tile_x' in e['data']
         }
-        if dirty_tile_coords:
-            _update_dirty_tiles(sim, dirty_tile_coords)
+        if crop_dirty_coords:
+            _update_dirty_tiles(sim, crop_dirty_coords)
+
+        dirty_colony_ids = {
+            e['data']['colony_id']
+            for e in events
+            if e['type'] in ('harvested', 'ate_from_cache')
+            and e.get('data') and 'colony_id' in e['data']
+        }
+        if dirty_colony_ids:
+            _update_dirty_colonies(sim, dirty_colony_ids)
 
         _update_agents(sim)
 
@@ -258,10 +269,14 @@ def load_current_simulation():
     tile_rows = db.session.query(models.WorldTile).all()
     world = mappers.rows_to_world(tile_rows, state.world_width, state.world_height)
 
+    colony_rows = db.session.query(models.Colony).all()
+    engine_colonies = [mappers.row_to_colony(row) for row in colony_rows]
+
     sim = Simulation(
         world=world,
         current_tick=state.current_tick,
         seed=state.seed,
+        colonies=engine_colonies if engine_colonies else None,
     )
 
     agent_rows = db.session.query(models.Agent).all()
@@ -343,6 +358,18 @@ def _update_dirty_tiles(sim, coords):
     )
     for row in rows:
         mappers.update_tile_row(row, by_coord[(row.x, row.y)])
+
+
+def _update_dirty_colonies(sim, colony_ids):
+    rows = (
+        db.session.query(models.Colony)
+        .filter(models.Colony.id.in_(colony_ids))
+        .all()
+    )
+    for row in rows:
+        engine = sim.colonies.get(row.id)
+        if engine is not None:
+            mappers.update_colony_row(row, engine)
 
 
 def _update_agents(sim):

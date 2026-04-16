@@ -9,6 +9,7 @@ from app.services.exceptions import SimulationNotFoundError
 from app.engine.colony import EngineColony
 from app.engine.world import Tile
 from app.engine.agent import Agent
+from app.engine import config as engine_config
 
 
 def _snapshot(sim):
@@ -307,3 +308,63 @@ def test_create_simulation_rejects_half_set_colony_kwargs(db_session):
         )
     # And no Colony rows were flushed — guard runs before side effects.
     assert db.session.query(models.Colony).count() == 0
+
+
+def test_step_simulation_persists_planted_tile_state(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    target = None
+    for row in sim.world.tiles:
+        for t in row:
+            if t.terrain == 'grass' and t.resource_amount == 0 and t.crop_state == 'none':
+                target = t; break
+        if target: break
+    assert target is not None
+    agent.x, agent.y = target.x, target.y
+    sim.current_tick = 30    # start of day phase
+    simulation_service.step_simulation(ticks=1)
+    row = db.session.query(models.WorldTile).filter_by(x=target.x, y=target.y).one()
+    assert row.crop_state == 'growing'
+    assert row.crop_colony_id == agent.colony_id
+
+
+def test_step_simulation_persists_harvested_stock(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    t = sim.world.get_tile(agent.x, agent.y)
+    t.crop_state = 'mature'
+    t.resource_amount = engine_config.HARVEST_YIELD
+    t.crop_colony_id = 999
+    sim.current_tick = 30    # day phase
+    simulation_service.step_simulation(ticks=1)
+    c_row = db.session.query(models.Colony).filter_by(id=agent.colony_id).one()
+    assert c_row.food_stock == engine_config.INITIAL_FOOD_STOCK + engine_config.HARVEST_YIELD
+
+
+def test_step_simulation_persists_ate_from_cache_stock_debit(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    colony = sim.colonies[agent.colony_id]
+    agent.x, agent.y = colony.camp_x, colony.camp_y
+    agent.hunger = 50.0
+    # Move other agents away from camp so only this one eats
+    for other in sim.agents:
+        if other.colony_id == colony.id and other.id != agent.id:
+            other.x, other.y = 0, 0
+    sim.current_tick = 0     # dawn
+    initial_stock = colony.food_stock
+    simulation_service.step_simulation(ticks=1)
+    c_row = db.session.query(models.Colony).filter_by(id=colony.id).one()
+    assert c_row.food_stock == initial_stock - engine_config.EAT_COST
