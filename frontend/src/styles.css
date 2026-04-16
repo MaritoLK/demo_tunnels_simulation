@@ -977,3 +977,24 @@ body::after {
   border: 2px solid var(--ground-0);
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--hot); }
+
+/* --- Clock widget (day/phase/progress) ---------------------------------- */
+
+.clock-widget {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  background: rgba(20, 22, 36, 0.8);
+  color: #e8ecf2;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+}
+.clock-widget__main { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.clock-widget__sep { opacity: 0.4; }
+.clock-widget__bar { margin-top: 4px; font-size: 11px; display: flex; gap: 8px; }
+.clock-widget__bar-fill { letter-spacing: 1px; }
+.clock-widget__bar-count { opacity: 0.7; }
