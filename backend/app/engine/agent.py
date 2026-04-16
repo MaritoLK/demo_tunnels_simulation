@@ -137,7 +137,15 @@ def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
-def tick_agent(agent, world, all_agents, *, rng):
+def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng):
+    """Advance one tick for `agent`.
+
+    `colonies_by_id` is a dict {colony_id: EngineColony}. Indexing by
+    agent.colony_id keeps lookup O(1). `phase` comes from cycle.phase_for.
+
+    Legacy callers that pass neither `colonies_by_id` nor `phase` fall back
+    to the original pre-cultivation behavior.
+    """
     if not agent.alive:
         return []
 
@@ -151,6 +159,38 @@ def tick_agent(agent, world, all_agents, *, rng):
     if agent.health <= 0:
         events.append(actions.die(agent))
         return events
+
+    # Legacy compat: if either colonies_by_id or phase is None, fall back
+    # to the original tick_agent body.
+    if colonies_by_id is None or phase is None:
+        return _legacy_tick_agent(agent, world, all_agents, rng=rng)
+
+    # New path: phase-aware behavior with colony lookup.
+    # Dawn-eat flag is transient: cleared any tick that isn't in the dawn
+    # window so next dawn's decide_action sees a fresh eligibility.
+    if phase != 'dawn':
+        agent.ate_this_dawn = False
+
+    # Hunger decay scales down at night (agents are asleep).
+    scale = needs.NIGHT_HUNGER_SCALE if phase == 'night' else 1.0
+    needs.decay_needs(agent, hunger_scale=scale)
+
+    if agent.health <= 0:
+        events.append(actions.die(agent))
+        return events
+
+    colony = colonies_by_id.get(agent.colony_id)
+    action_name = decide_action(agent, world, colony, phase)
+    events.append(execute_action(action_name, agent, world, all_agents, colony, rng=rng))
+
+    agent.age += 1
+    return events
+
+
+def _legacy_tick_agent(agent, world, all_agents, *, rng):
+    """Pre-cultivation tick driver. Kept for legacy callers until migration
+    to the new phase-aware signature. Identical to the original body before T11."""
+    events = []
 
     needs.decay_needs(agent)
 

@@ -35,8 +35,8 @@ SOCIAL_LOW = 30.0
 NEED_MAX = 100.0
 
 
-def decay_needs(agent):
-    agent.hunger = max(0.0, agent.hunger - HUNGER_DECAY)
+def decay_needs(agent, hunger_scale=1.0):
+    agent.hunger = max(0.0, agent.hunger - HUNGER_DECAY * hunger_scale)
     agent.energy = max(0.0, agent.energy - ENERGY_DECAY)
     agent.social = max(0.0, agent.social - SOCIAL_DECAY)
     if agent.hunger <= 0.0:
