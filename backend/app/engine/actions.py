@@ -163,3 +163,110 @@ def die(agent):
         'type': 'died',
         'description': f'{agent.name} has died',
     }
+
+
+def plant(agent, world, colony):
+    """Convert the tile under `agent` into a growing crop owned by `colony`.
+
+    Pre-conditions (caller should already have checked via decide_action):
+      * tile.crop_state == 'none'
+      * tile.resource_amount == 0 (i.e. empty wild)
+      * colony.growing_count < config.MAX_FIELDS_PER_COLONY
+
+    This function re-guards all three; a violated pre-condition yields an
+    `idled` no-op event so the engine never silently mutates state.
+    """
+    from . import config
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.crop_state != 'none':
+        return {'type': 'idled', 'description': f'{agent.name} found crop already here'}
+    if tile.resource_amount > 0:
+        return {'type': 'idled', 'description': f'{agent.name} found wild food here, skipping plant'}
+    if colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
+        return {'type': 'idled', 'description': f'{agent.name} deferred plant (field cap)'}
+
+    tile.crop_state = 'growing'
+    tile.crop_growth_ticks = 0
+    tile.crop_colony_id = colony.id
+    colony.growing_count += 1
+    return {
+        'type': 'planted',
+        'description': f'{agent.name} planted at ({tile.x},{tile.y})',
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'colony_id': colony.id,
+            'agent_id': agent.id,
+        },
+    }
+
+
+def harvest(agent, world, colony):
+    """Harvest a mature crop under `agent`. Credits `colony` (the harvester).
+
+    The planter's colony is NOT credited — this is the "pure scarcity, no
+    ownership" rule from the spec. Any agent can harvest any mature tile
+    and the yield goes to their own colony's stock.
+    """
+    from . import config
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.crop_state != 'mature':
+        return {'type': 'idled', 'description': f'{agent.name} found no mature crop'}
+
+    yield_amount = config.HARVEST_YIELD
+    colony.food_stock += yield_amount
+    tile.crop_state = 'none'
+    tile.crop_growth_ticks = 0
+    tile.crop_colony_id = None
+    tile.resource_amount = 0
+
+    return {
+        'type': 'harvested',
+        'description': f'{agent.name} harvested ({tile.x},{tile.y}) → +{yield_amount} stock',
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'colony_id': colony.id,
+            'agent_id': agent.id,
+            'yield_amount': yield_amount,
+        },
+    }
+
+
+def eat_camp(agent, colony):
+    """Dawn meal at camp. Cap-fills hunger, debits colony stock by EAT_COST.
+
+    Pre-conditions:
+      * agent on own camp tile
+      * colony.food_stock >= EAT_COST
+      * agent.hunger < NEED_MAX
+      * agent has not already eaten this dawn window
+
+    Violations → idled no-op. Success → cap-fills hunger, emits
+    ate_from_cache with amount=EAT_COST, flags agent.ate_this_dawn.
+    """
+    from . import config
+    if not colony.is_at_camp(agent.x, agent.y):
+        return {'type': 'idled', 'description': f'{agent.name} not at camp'}
+    if colony.food_stock < config.EAT_COST:
+        return {'type': 'idled', 'description': f'{agent.name} found empty stock'}
+    if agent.hunger >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} already full'}
+    if agent.ate_this_dawn:
+        return {'type': 'idled', 'description': f'{agent.name} already ate this dawn'}
+
+    hunger_before = agent.hunger
+    agent.hunger = needs.NEED_MAX
+    colony.food_stock -= config.EAT_COST
+    agent.ate_this_dawn = True
+    return {
+        'type': 'ate_from_cache',
+        'description': f'{agent.name} ate at camp',
+        'data': {
+            'agent_id': agent.id,
+            'colony_id': colony.id,
+            'amount': config.EAT_COST,
+            'hunger_before': hunger_before,
+            'hunger_after': agent.hunger,
+        },
+    }

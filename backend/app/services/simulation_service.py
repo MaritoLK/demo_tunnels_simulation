@@ -17,6 +17,8 @@ from sqlalchemy import tuple_
 
 from app import db, models
 from app.engine.simulation import Simulation, new_simulation
+from app.engine import config as engine_config
+from app.engine.colony import EngineColony
 
 from . import mappers
 from .exceptions import SimulationNotFoundError
@@ -95,26 +97,85 @@ def _reset_cache():
     _current_sim = None
 
 
-def create_simulation(width, height, seed=None, agent_count=0):
+DEFAULT_COLONY_PALETTE = [
+    ('Red',    '#e74c3c'),
+    ('Blue',   '#3498db'),
+    ('Purple', '#9b59b6'),
+    ('Yellow', '#f1c40f'),
+]
+
+
+def _default_camp_positions(width, height, n_colonies):
+    """Corner camps inset 3 tiles. Supports 1..4 colonies; raises for more."""
+    if n_colonies > 4:
+        raise ValueError(f'colonies={n_colonies} exceeds supported 4')
+    corners = [(3, 3), (width - 4, 3), (3, height - 4), (width - 4, height - 4)]
+    return corners[:n_colonies]
+
+
+def _build_default_colonies(width, height, n_colonies):
+    positions = _default_camp_positions(width, height, n_colonies)
+    palette = DEFAULT_COLONY_PALETTE[:n_colonies]
+    out = []
+    for (name, color), (cx, cy) in zip(palette, positions):
+        out.append(EngineColony(
+            id=None, name=name, color=color,
+            camp_x=cx, camp_y=cy,
+            food_stock=engine_config.INITIAL_FOOD_STOCK,
+        ))
+    return out
+
+
+def create_simulation(width, height, seed=None, agent_count=0,
+                      colonies=0, agents_per_colony=None):
+    """Create a fresh sim. Two calling paths:
+      * Legacy:   agent_count=N (pre-cultivation, no colony system).
+      * Colonies: colonies=K + agents_per_colony=M (default demo path).
+    Default kwargs keep every existing caller on the legacy path; T22
+    wires the route to opt in explicitly.
+    """
     global _current_sim
+
+    # Colony kwargs travel as a pair. Half-set previously fell silently to
+    # the legacy branch after already flushing Colony rows — loud at the
+    # seam instead (mirrors the engine-layer guard in new_simulation).
+    if bool(colonies) != (agents_per_colony is not None):
+        raise ValueError(
+            'colonies and agents_per_colony must be passed together; '
+            f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
+        )
 
     try:
         db.session.query(models.Event).delete()
         db.session.query(models.Agent).delete()
         db.session.query(models.WorldTile).delete()
+        db.session.query(models.Colony).delete()
         db.session.query(models.SimulationState).delete()
         db.session.flush()
 
-        sim = new_simulation(width, height, seed=seed, agent_count=agent_count)
+        if colonies and agents_per_colony is not None:
+            engine_colonies = _build_default_colonies(width, height, colonies)
+            colony_rows = [mappers.colony_to_row(c) for c in engine_colonies]
+            db.session.add_all(colony_rows)
+            db.session.flush()
+            for c, row in zip(engine_colonies, colony_rows):
+                c.id = row.id
 
-        tile_rows = [
-            mappers.tile_to_row(tile)
-            for row in sim.world.tiles
-            for tile in row
-        ]
+            sim = new_simulation(
+                width, height, seed=seed,
+                colonies=engine_colonies,
+                agents_per_colony=agents_per_colony,
+            )
+        else:
+            sim = new_simulation(
+                width, height, seed=seed,
+                agent_count=agent_count,
+            )
+
+        tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
         db.session.add_all(tile_rows)
 
-        agent_rows = [mappers.agent_to_row(agent) for agent in sim.agents]
+        agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
         db.session.add_all(agent_rows)
         db.session.flush()
         for agent, row in zip(sim.agents, agent_rows):
@@ -122,10 +183,8 @@ def create_simulation(width, height, seed=None, agent_count=0):
 
         state = models.SimulationState(
             current_tick=sim.current_tick,
-            running=False,
-            speed=1.0,
-            world_width=width,
-            world_height=height,
+            running=False, speed=1.0,
+            world_width=width, world_height=height,
             seed=seed,
             **_rng_state_columns(sim),
         )
@@ -145,11 +204,12 @@ def step_simulation(ticks=1):
 
     Persisted per step:
       * new Event rows (one per engine event)
-      * updated WorldTile rows (only tiles whose resource_amount changed,
-        derived from 'foraged' event payloads)
-      * updated Agent rows (every agent that's alive, since position /
-        needs mutate every tick)
-      * SimulationState.current_tick bumped; RNG sub-stream states snapshotted
+      * updated WorldTile rows — tiles dirtied by foraged/planted/harvested/
+        crop_matured events (resource_amount, crop_state, crop_growth_ticks,
+        crop_colony_id)
+      * updated Colony rows — food_stock deltas from harvested/ate_from_cache
+      * updated Agent rows — alive agents mutate each tick
+      * SimulationState — current_tick + RNG sub-stream snapshots
     """
     if not isinstance(ticks, int) or ticks < 1:
         raise ValueError(f'ticks must be a positive int, got {ticks!r}')
@@ -167,10 +227,18 @@ def step_simulation(ticks=1):
         dirty_tile_coords = {
             (e['data']['tile_x'], e['data']['tile_y'])
             for e in events
-            if e['type'] == 'foraged'
+            if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
         }
         if dirty_tile_coords:
             _update_dirty_tiles(sim, dirty_tile_coords)
+
+        dirty_colony_ids = {
+            e['data']['colony_id']
+            for e in events
+            if e['type'] in ('harvested', 'ate_from_cache')
+        }
+        if dirty_colony_ids:
+            _update_dirty_colonies(sim, dirty_colony_ids)
 
         _update_agents(sim)
 
@@ -199,11 +267,19 @@ def load_current_simulation():
     tile_rows = db.session.query(models.WorldTile).all()
     world = mappers.rows_to_world(tile_rows, state.world_width, state.world_height)
 
+    colony_rows = db.session.query(models.Colony).order_by(models.Colony.id).all()
+    engine_colonies = [mappers.row_to_colony(r) for r in colony_rows]
+
     sim = Simulation(
         world=world,
         current_tick=state.current_tick,
         seed=state.seed,
+        colonies=engine_colonies,
     )
+    # growing_count isn't persisted (derived state, T12 contract). Delegate
+    # to the engine's own recompute so service + step() share one definition
+    # — if the growing rule ever changes, both sites follow.
+    sim.recompute_growing_counts()
 
     agent_rows = db.session.query(models.Agent).all()
     for row in agent_rows:
@@ -284,6 +360,24 @@ def _update_dirty_tiles(sim, coords):
     )
     for row in rows:
         mappers.update_tile_row(row, by_coord[(row.x, row.y)])
+
+
+def _update_dirty_colonies(sim, colony_ids):
+    """Write food_stock deltas from harvested/ate_from_cache events back to DB.
+
+    Unlike `_update_agents` (agents die mid-tick, id-miss is legitimate),
+    a colony that emitted an event *must* exist in `sim.colonies` — no
+    lifecycle culls colonies. Index direct, let KeyError propagate so a
+    reload-without-colonies or engine/service drift fails loud at the
+    transaction boundary instead of silently dropping food_stock.
+    """
+    rows = (
+        db.session.query(models.Colony)
+        .filter(models.Colony.id.in_(colony_ids))
+        .all()
+    )
+    for row in rows:
+        mappers.update_colony_row(row, sim.colonies[row.id])
 
 
 def _update_agents(sim):

@@ -31,6 +31,7 @@ import {
 import { ApiError, apiGet, apiSend } from './client';
 import type {
   Agent,
+  Colony,
   EventRow,
   SimControlUpdate,
   SimulationSummary,
@@ -100,6 +101,16 @@ export function useAgents(
   });
 }
 
+export function useColonies(
+  opts?: Omit<UseQueryOptions<WorldStateResponse, Error, Colony[]>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery<WorldStateResponse, Error, Colony[]>({
+    ...worldStateQuery(),
+    select: (d) => d.colonies,
+    ...opts,
+  });
+}
+
 // Live event log slice — reads the `events` array that the composite
 // endpoint populates with the most recent N events. Separate hook rather
 // than inlining in EventLog so callers stay terse.
@@ -153,6 +164,8 @@ export interface CreateSimArgs {
   height: number;
   seed?: number;
   agent_count?: number;
+  colonies?: number;
+  agents_per_colony?: number;
 }
 
 export function useCreateSimulation() {

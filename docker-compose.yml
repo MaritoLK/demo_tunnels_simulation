@@ -4,21 +4,26 @@ services:
     build: ./backend
     ports:
       - "5000:5000"
-    environment:                                                                                                                                     
+    environment:
       DATABASE_URL: postgresql://tunnels:${DB_PASSWORD:-tunnels_dev}@db:5432/tunnels
-      FLASK_ENV: development 
+      FLASK_ENV: development
     volumes:
       - ./backend:/app
-    depends_on:                                                                                                                                      
-      db:      
+    depends_on:
+      db:
         condition: service_healthy
+    # Auto-restart on crash so a single unhandled exception during the
+    # live demo doesn't end the session. `unless-stopped` (not `always`)
+    # respects a deliberate `docker compose stop` between runs.
+    restart: unless-stopped
   react:
     build: ./frontend
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend:/app                                                                                                                              
+      - ./frontend:/app
       - /app/node_modules
+    restart: unless-stopped
 
   nginx:          
     image: nginx:alpine                                                                                                                            

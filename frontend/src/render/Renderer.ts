@@ -15,13 +15,14 @@
 //     references to it past the call.
 //   - dispose() tears down any owned resources (event listeners, GL
 //     contexts, RAF handles).
-import type { Agent, Tile } from '../api/types';
+import type { Agent, Colony, Tile } from '../api/types';
 
 export interface FrameSnapshot {
   width: number; // world width in tiles
   height: number; // world height in tiles
   tiles: Tile[][]; // tiles[y][x]
   agents: Agent[];
+  colonies: Colony[];
   // Camera + UI state, resolved at frame-prep time so the renderer
   // is a pure function of snapshot → pixels.
   tilePx: number; // effective tile size in CSS pixels (zoom applied)
@@ -34,6 +35,11 @@ export interface FrameSnapshot {
   // snapshot rather than read inside the renderer, so the renderer
   // stays a pure function of snapshot + clock.
   reducedMotion: boolean;
+  // Backend tick counter. The renderer uses tick-advance as the
+  // signal to snapshot previous positions for inter-poll
+  // interpolation. Scalar render input — not a simulation concern
+  // leaking in, same category as tilePx.
+  currentTick: number;
 }
 
 export interface Renderer {

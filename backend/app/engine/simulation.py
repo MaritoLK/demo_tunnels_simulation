@@ -4,6 +4,7 @@ import random
 
 from .agent import Agent, tick_agent
 from .world import World
+from . import cycle
 
 
 def _sub_seed(master, key):
@@ -40,13 +41,15 @@ def _rng_state_from_json(snapshot):
 
 
 class Simulation:
-    def __init__(self, world, agents=None, current_tick=0, seed=None):
+    def __init__(self, world, agents=None, current_tick=0, seed=None, colonies=None):
         self.world = world
         self.agents = list(agents) if agents is not None else []
         self.current_tick = current_tick
         self.seed = seed
         self.rng_spawn = random.Random(_sub_seed(seed, 'spawn'))
         self.rng_tick = random.Random(_sub_seed(seed, 'tick'))
+        # {colony_id: EngineColony}. Empty dict for legacy sims (pre-colony).
+        self.colonies = {c.id: c for c in (colonies or [])}
 
     def snapshot_rng_state(self):
         """JSON-safe snapshot of both sub-stream RNGs for persistence."""
@@ -90,16 +93,49 @@ class Simulation:
 
     def step(self):
         events = []
+        phase = cycle.phase_for(self.current_tick)
+        self.recompute_growing_counts()
         snapshot = list(self.agents)
-        for agent in snapshot:
-            if not agent.alive:
-                continue
-            for event in tick_agent(agent, self.world, snapshot, rng=self.rng_tick):
-                event['tick'] = self.current_tick
-                event['agent_id'] = agent.id
-                events.append(event)
+        if self.colonies:
+            # Colony-aware: thread phase + colonies through the new tick_agent path.
+            for agent in snapshot:
+                if not agent.alive:
+                    continue
+                for event in tick_agent(
+                    agent, self.world, snapshot, self.colonies,
+                    phase=phase, rng=self.rng_tick,
+                ):
+                    event['tick'] = self.current_tick
+                    event['agent_id'] = agent.id
+                    events.append(event)
+        else:
+            # Legacy sim (no colonies wired). Use the pre-cultivation tick signature
+            # so _legacy_tick_agent runs — colonies_by_id=None disables phase gating
+            # and keeps existing audit scripts + test_simulation tests green. Retired
+            # when all callers migrate to colonies=[...] (later plan task).
+            for agent in snapshot:
+                if not agent.alive:
+                    continue
+                for event in tick_agent(agent, self.world, snapshot, rng=self.rng_tick):
+                    event['tick'] = self.current_tick
+                    event['agent_id'] = agent.id
+                    events.append(event)
+        for event in self.world.tick(phase):
+            event['tick'] = self.current_tick
+            events.append(event)
         self.current_tick += 1
         return events
+
+    def recompute_growing_counts(self):
+        """Re-derive `colony.growing_count` from tile state.
+        Called at the start of each `step`. O(tiles) per tick."""
+        counts = {cid: 0 for cid in self.colonies}
+        for row in self.world.tiles:
+            for tile in row:
+                if tile.crop_state == 'growing' and tile.crop_colony_id in counts:
+                    counts[tile.crop_colony_id] += 1
+        for cid, colony in self.colonies.items():
+            colony.growing_count = counts[cid]
 
     def run(self, ticks):
         batch = []
@@ -116,7 +152,8 @@ MAX_WORLD_CELLS = 10_000
 MAX_AGENTS = 1000
 
 
-def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='Agent'):
+def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='Agent',
+                   colonies=None, agents_per_colony=None):
     if not (isinstance(width, int) and isinstance(height, int)):
         raise ValueError('width and height must be ints')
     if width < 1 or height < 1:
@@ -131,9 +168,25 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
         raise ValueError(
             f'agent_count={agent_count} exceeds min(world_cells={width * height}, MAX_AGENTS={MAX_AGENTS})'
         )
+    # Colony kwargs travel as a pair: either both set (colony-aware spawn)
+    # or both None (legacy agent_count spawn). Half-set routes silently to
+    # the wrong branch and blows up 3 frames deep in tick_agent's missing-
+    # colony_id invariant — fail loud at the seam instead.
+    if (colonies is None) != (agents_per_colony is None):
+        raise ValueError(
+            'colonies and agents_per_colony must be passed together; '
+            f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
+        )
     world = World(width, height)
     world.generate(seed=seed)
-    sim = Simulation(world, seed=seed)
-    for i in range(agent_count):
-        sim.spawn_agent(f'{agent_name_prefix}-{i + 1}')
+    sim = Simulation(world, seed=seed, colonies=colonies)
+    if colonies is not None and agents_per_colony is not None:
+        for colony in colonies:
+            for i in range(agents_per_colony):
+                name = f'{colony.name}-{i + 1}'
+                a = Agent(name, colony.camp_x, colony.camp_y, colony_id=colony.id)
+                sim.agents.append(a)
+    else:
+        for i in range(agent_count):
+            sim.spawn_agent(f'{agent_name_prefix}-{i + 1}')
     return sim

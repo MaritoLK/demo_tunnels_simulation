@@ -30,6 +30,14 @@ import rockUrl from '../assets/tiny-swords/free/Terrain/Decorations/Rocks/Rock1.
 // occupies the lower-centre of each frame; the upper rows are
 // animation overshoot space (head bob, tool sweep).
 import pawnIdleUrl from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Idle.png';
+// House sprites — 128×192 static per colony palette. Keyed by the
+// backend colony name (Red / Blue / Purple / Yellow — see
+// DEFAULT_COLONY_PALETTE in simulation_service.py). Drawn over the
+// camp tile to give each colony a visible home.
+import houseRedUrl from '../assets/tiny-swords/free/Buildings/Red Buildings/House1.png';
+import houseBlueUrl from '../assets/tiny-swords/free/Buildings/Blue Buildings/House1.png';
+import housePurpleUrl from '../assets/tiny-swords/free/Buildings/Purple Buildings/House1.png';
+import houseYellowUrl from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House1.png';
 
 export interface SpriteAtlas {
   tilemap: HTMLImageElement;
@@ -38,6 +46,7 @@ export interface SpriteAtlas {
   bush: HTMLImageElement;
   rock: HTMLImageElement;
   pawn: HTMLImageElement;
+  houses: Record<string, HTMLImageElement>;
 }
 
 // Source-image tile size. Distinct from the rendered tilePx — the
@@ -78,18 +87,40 @@ export const TERRAIN_DECORATION: Record<Terrain, 'bush' | 'rock' | null> = {
   water:  null,
 };
 
+// House frame is the full source image (128×192). The house body
+// occupies the lower ~70% of the frame; drawing it so the base of
+// the house anchors to the bottom of a ~3-tile-tall box sits the
+// building plausibly "on" the camp tile instead of floating over it.
+export const HOUSE_FRAME_W = 128;
+export const HOUSE_FRAME_H = 192;
+
 export async function loadSprites(): Promise<SpriteAtlas> {
-  // Promise.all so all six image loads run in parallel — first paint
+  // Promise.all so all image loads run in parallel — first paint
   // is gated on the slowest, not the sum.
-  const [tilemap, water, meat, bush, rock, pawn] = await Promise.all([
+  const [
+    tilemap, water, meat, bush, rock, pawn,
+    houseRed, houseBlue, housePurple, houseYellow,
+  ] = await Promise.all([
     loadImage(tilemapUrl),
     loadImage(waterUrl),
     loadImage(meatUrl),
     loadImage(bushUrl),
     loadImage(rockUrl),
     loadImage(pawnIdleUrl),
+    loadImage(houseRedUrl),
+    loadImage(houseBlueUrl),
+    loadImage(housePurpleUrl),
+    loadImage(houseYellowUrl),
   ]);
-  return { tilemap, water, meat, bush, rock, pawn };
+  return {
+    tilemap, water, meat, bush, rock, pawn,
+    houses: {
+      Red: houseRed,
+      Blue: houseBlue,
+      Purple: housePurple,
+      Yellow: houseYellow,
+    },
+  };
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {

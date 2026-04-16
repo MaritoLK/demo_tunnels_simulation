@@ -291,3 +291,75 @@ def test_events_rejects_oversized_limit(client):
 def test_unknown_route_is_404(client):
     resp = client.get(f'{API}/nope')
     assert resp.status_code == 404
+
+
+def test_world_state_includes_sim_day_and_phase(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    resp = client.get(f'{API}/world/state')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert 'day' in body['sim']
+    assert 'phase' in body['sim']
+    assert body['sim']['phase'] == 'dawn'
+    assert body['sim']['day'] == 0
+
+
+def test_agent_includes_colony_id(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    for a in body['agents']:
+        # Legacy agent_count path: agents spawn unaffiliated. Asserting
+        # `is None` (not just key-present) catches a future regression
+        # where the field leaks a stale int — which the frontend would
+        # then index into a colony map with no matching entry.
+        assert a['colony_id'] is None
+
+
+def test_tile_includes_crop_fields(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'agent_count': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    sample = body['world']['tiles'][0][0]
+    assert 'crop_state' in sample
+    assert 'crop_growth_ticks' in sample
+    assert 'crop_colony_id' in sample
+
+
+def test_put_rejects_half_set_colony_kwargs(client, db_session):
+    # Route-layer gate (1 of 3) for the paired-kwargs invariant. Must 400
+    # before `create_simulation` runs, because that service call's first
+    # act is a DELETE cascade across every sim table — passing through
+    # silently here would wipe state before the service raised.
+    resp = _put(client, {
+        'width': 10, 'height': 10, 'seed': 1,
+        'colonies': 4,    # agents_per_colony deliberately omitted
+    })
+    assert resp.status_code == 400
+    resp = _put(client, {
+        'width': 10, 'height': 10, 'seed': 1,
+        'agents_per_colony': 3,    # colonies deliberately omitted
+    })
+    assert resp.status_code == 400
+
+
+def test_world_state_includes_colonies_array(client, db_session):
+    client.put(f'{API}/simulation', data=json.dumps({
+        'width': 20, 'height': 20, 'seed': 1,
+        'colonies': 4, 'agents_per_colony': 3,
+    }), content_type='application/json')
+    body = client.get(f'{API}/world/state').get_json()
+    assert 'colonies' in body
+    assert len(body['colonies']) == 4
+    c0 = body['colonies'][0]
+    assert set(c0.keys()) >= {
+        'id', 'name', 'color', 'camp_x', 'camp_y',
+        'food_stock', 'growing_count',
+    }

@@ -4,6 +4,8 @@
 
 export type Terrain = 'grass' | 'water' | 'forest' | 'stone' | 'sand';
 export type ResourceType = 'food' | 'wood' | 'stone' | null;
+export type CropState = 'none' | 'growing' | 'mature';
+export type Phase = 'dawn' | 'day' | 'dusk' | 'night';
 
 export interface Tile {
   x: number;
@@ -11,6 +13,9 @@ export interface Tile {
   terrain: Terrain;
   resource_type: ResourceType;
   resource_amount: number;
+  crop_state: CropState;
+  crop_growth_ticks: number;
+  crop_colony_id: number | null;
 }
 
 export interface WorldSnapshot {
@@ -31,6 +36,17 @@ export interface Agent {
   health: number;
   age: number;
   alive: boolean;
+  colony_id: number | null;
+}
+
+export interface Colony {
+  id: number;
+  name: string;
+  color: string; // '#rrggbb'
+  camp_x: number;
+  camp_y: number;
+  food_stock: number;
+  growing_count: number;
 }
 
 export interface SimulationSummary {
@@ -42,6 +58,8 @@ export interface SimulationSummary {
   alive_count: number;
   running: boolean;
   speed: number;
+  day: number;
+  phase: Phase;
 }
 
 // Composite polling response — one round-trip replaces the four separate
@@ -50,6 +68,7 @@ export interface WorldStateResponse {
   sim: SimulationSummary;
   world: WorldSnapshot;
   agents: Agent[];
+  colonies: Colony[];
   events: EventRow[];
 }
 

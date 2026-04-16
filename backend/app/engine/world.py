@@ -31,23 +31,30 @@ TERRAIN_WEIGHTS = {
 BIOME_SEEDS_PER_TILE = 0.04
 MIN_BIOME_SEEDS = 6  # floor for tiny worlds so even 4×4 gets variety
 
-FOOD_ON_GRASS_CHANCE = 0.30
+FOOD_ON_GRASS_CHANCE = 0.12
 INITIAL_RESOURCE_AMOUNT = {
-    'food': 20.0,
+    'food': 10.0,
     'wood': 15.0,
     'stone': 10.0,
 }
 
 
 class Tile:
-    __slots__ = ('x', 'y', 'terrain', 'resource_type', 'resource_amount')
+    __slots__ = (
+        'x', 'y', 'terrain', 'resource_type', 'resource_amount',
+        'crop_state', 'crop_growth_ticks', 'crop_colony_id',
+    )
 
-    def __init__(self, x, y, terrain, resource_type=None, resource_amount=0.0):
+    def __init__(self, x, y, terrain, resource_type=None, resource_amount=0.0,
+                 crop_state='none', crop_growth_ticks=0, crop_colony_id=None):
         self.x = x
         self.y = y
         self.terrain = terrain
         self.resource_type = resource_type
         self.resource_amount = resource_amount
+        self.crop_state = crop_state
+        self.crop_growth_ticks = crop_growth_ticks
+        self.crop_colony_id = crop_colony_id
 
     @property
     def is_walkable(self):
@@ -139,3 +146,32 @@ class World:
                     best = tile
                     best_dist = d
         return best
+
+    def tick(self, phase):
+        """World-level per-tick logic. Currently: crop growth (day phase only).
+
+        Returns a list of event dicts (e.g. `crop_matured`) emitted this
+        tick. Pure: no I/O, deterministic given tile state + phase.
+        """
+        if phase != 'day':
+            return []
+        from . import config  # local import keeps engine imports flat
+        events = []
+        for row in self.tiles:
+            for tile in row:
+                if tile.crop_state != 'growing':
+                    continue
+                tile.crop_growth_ticks += 1
+                if tile.crop_growth_ticks >= config.CROP_MATURE_TICKS:
+                    tile.crop_state = 'mature'
+                    tile.resource_amount = config.HARVEST_YIELD
+                    events.append({
+                        'type': 'crop_matured',
+                        'description': f'crop matured at ({tile.x},{tile.y})',
+                        'data': {
+                            'tile_x': tile.x,
+                            'tile_y': tile.y,
+                            'colony_id': tile.crop_colony_id,
+                        },
+                    })
+        return events

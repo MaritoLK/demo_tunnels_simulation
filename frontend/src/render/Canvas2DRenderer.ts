@@ -25,6 +25,9 @@
 import type { Renderer, FrameSnapshot } from './Renderer';
 import type { Terrain } from '../api/types';
 import {
+  BUSH_FRAME_PX,
+  HOUSE_FRAME_H,
+  HOUSE_FRAME_W,
   loadSprites,
   SOURCE_TILE_PX,
   TERRAIN_DECORATION,
@@ -77,6 +80,23 @@ export class Canvas2DRenderer implements Renderer {
   // the procedural rect renderer (during load, on load failure, in
   // tests where the assets aren't bundled).
   private sprites: SpriteAtlas | null = null;
+  // Tick-interpolation state. All of it lives on the renderer because
+  // "how to fill the gap between two poll snapshots" is a rendering
+  // concern, not a simulation one — the engine only hands us integer
+  // tile positions.
+  //   prevPositions      — agent positions at the last tick boundary;
+  //                        lerped toward the snapshot's current position.
+  //   lastSeenPositions  — rolling shadow of positions seen on the
+  //                        most recent frame. Becomes prev on tick-advance.
+  //   lastSeenTick       — most recent tick we drew (-1 = never).
+  //   lastTickBoundaryAt — performance.now() when we last saw a tick advance.
+  //   pollIntervalMs     — EMA of inter-poll delta, seeded from the React
+  //                        Query poll interval. Controls lerp speed.
+  private prevPositions = new Map<number, { x: number; y: number }>();
+  private lastSeenPositions = new Map<number, { x: number; y: number }>();
+  private lastSeenTick = -1;
+  private lastTickBoundaryAt = 0;
+  private pollIntervalMs = 500;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -123,9 +143,47 @@ export class Canvas2DRenderer implements Renderer {
     if (!this.canvas || !this.ctx) return;
     const { ctx } = this;
     const {
-      width, height, tiles, agents, tilePx, cameraX, cameraY,
-      selectedAgentId, reducedMotion,
+      width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
+      selectedAgentId, reducedMotion, currentTick,
     } = snap;
+
+    // Tick-advance bookkeeping for inter-poll interpolation. Runs
+    // before any drawing so the agent loop below can read a consistent
+    // (prevPositions, alpha) pair.
+    const now = performance.now();
+    const tickAdvanced = currentTick > this.lastSeenTick;
+    if (tickAdvanced && this.lastSeenTick >= 0) {
+      // Take the positions we drew last frame as the "prev" for this
+      // tick, then measure how long the previous tick window actually
+      // lasted so the lerp speed tracks real polling cadence.
+      this.prevPositions = new Map(this.lastSeenPositions);
+      const delta = now - this.lastTickBoundaryAt;
+      // Bound the EMA: a laptop that sleeps for a minute shouldn't
+      // pin the pollInterval at 60s. 3s covers 1 Hz sim speed with
+      // plenty of slack; anything longer is treated as "tab was idle,
+      // reseed from default" by leaving pollIntervalMs alone.
+      if (delta > 0 && delta < 3000) {
+        this.pollIntervalMs = this.pollIntervalMs * 0.7 + delta * 0.3;
+      }
+      this.lastTickBoundaryAt = now;
+    } else if (this.lastSeenTick < 0) {
+      // Very first frame — no history, no animation to unwind.
+      this.lastTickBoundaryAt = now;
+    }
+    this.lastSeenTick = currentTick;
+
+    // Prune dead/departed ids from both maps so there's no ghost draw
+    // on subsequent frames and no slow memory bloat.
+    const presentIds = new Set<number>();
+    for (const a of agents) presentIds.add(a.id);
+    for (const id of Array.from(this.lastSeenPositions.keys())) {
+      if (!presentIds.has(id)) this.lastSeenPositions.delete(id);
+    }
+    for (const id of Array.from(this.prevPositions.keys())) {
+      if (!presentIds.has(id)) this.prevPositions.delete(id);
+    }
+
+    const alpha = Math.max(0, Math.min(1, (now - this.lastTickBoundaryAt) / this.pollIntervalMs));
 
     ctx.save();
     // Background clear — match the shell ground so the canvas feels
@@ -192,11 +250,115 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
+    // Camp markers — house sprite when atlas is loaded, colored square
+    // fallback otherwise. Drawn above terrain so the camp reads as a
+    // built object, below agents so the occupant covers their own tile.
+    // The house is blitted oversized (2 tiles wide × 3 tall) and anchored
+    // so its base sits on the camp tile — same pattern as pawns, so the
+    // building stands on the ground rather than hovering over it.
+    for (const colony of colonies) {
+      const px = colony.camp_x * tilePx;
+      const py = colony.camp_y * tilePx;
+      const houseSprite = sprites ? sprites.houses[colony.name] : undefined;
+      if (sprites && houseSprite) {
+        const houseW = tilePx * 2;
+        const houseH = tilePx * (HOUSE_FRAME_H / HOUSE_FRAME_W) * 2;
+        const houseX = px + tilePx / 2 - houseW / 2;
+        const houseY = py + tilePx - houseH;
+        ctx.drawImage(
+          houseSprite,
+          0, 0, HOUSE_FRAME_W, HOUSE_FRAME_H,
+          houseX, houseY, houseW, houseH,
+        );
+        // Thin colored halo ring under the house so team reading still
+        // works even with the building obscuring the tile itself.
+        ctx.strokeStyle = colony.color;
+        ctx.lineWidth = Math.max(1.5, tilePx * 0.1);
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.ellipse(
+          px + tilePx / 2, py + tilePx * 0.9,
+          tilePx * 0.55, tilePx * 0.2,
+          0, 0, Math.PI * 2,
+        );
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+      } else {
+        ctx.fillStyle = colony.color;
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+        ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.06);
+        ctx.strokeRect(px + 2, py + 2, tilePx - 4, tilePx - 4);
+      }
+    }
+
+    // Crop overlay. Growing → small bush sprite at ~50% tile scale so a
+    // sprout reads as a young plant, not a grass-colored dot colliding
+    // with grass terrain. Mature → yellow fill dot (no asset in the free
+    // pack conveys "ripe crop" better than a gold pip). Falls back to
+    // the dot-pair in the procedural path for headless tests.
+    for (let y = 0; y < height; y++) {
+      const row = tiles[y];
+      if (!row) continue;
+      for (let x = 0; x < width; x++) {
+        const t = row[x];
+        if (!t || t.crop_state === 'none') continue;
+        const ccx = x * tilePx + tilePx / 2;
+        const ccy = y * tilePx + tilePx / 2;
+        if (sprites && t.crop_state === 'growing') {
+          const bushSize = tilePx * 0.55;
+          const bushX = ccx - bushSize / 2;
+          const bushY = ccy - bushSize / 2;
+          ctx.drawImage(
+            sprites.bush,
+            0, 0, BUSH_FRAME_PX, BUSH_FRAME_PX,
+            bushX, bushY, bushSize, bushSize,
+          );
+        } else {
+          const cr = Math.max(2, tilePx * 0.22);
+          ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+          ctx.beginPath();
+          ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          ctx.lineWidth = Math.max(1, tilePx * 0.06);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Colony color lookup — O(1) per agent in the loop below. Built once
+    // per frame; colonies array is small (<=4) so this is negligible.
+    const colonyColorById = new Map<number, string>();
+    for (const c of colonies) colonyColorById.set(c.id, c.color);
+
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
     for (const a of agents) {
-      const cx = a.x * tilePx + tilePx / 2;
-      const cy = a.y * tilePx + tilePx / 2;
+      // Body position = interpolated between prev (last tick boundary)
+      // and current (this tick's target). Halo + selection ring stay
+      // on the target tile so hit-tests match the visual anchor.
+      // Snap if the agent moved more than one tile in a single tick
+      // window (teleport, multi-step tick batch) — sliding them
+      // through intermediate tiles would look like they're phasing
+      // through walls, worse than a crisp cut.
+      const prev = this.prevPositions.get(a.id);
+      let bodyX = a.x;
+      let bodyY = a.y;
+      if (prev && !reducedMotion) {
+        const dx = a.x - prev.x;
+        const dy = a.y - prev.y;
+        if (dx * dx + dy * dy <= 2) {
+          bodyX = prev.x + dx * alpha;
+          bodyY = prev.y + dy * alpha;
+        }
+      }
+      const cx = bodyX * tilePx + tilePx / 2;
+      const cy = bodyY * tilePx + tilePx / 2;
+      const targetCx = a.x * tilePx + tilePx / 2;
+      const targetCy = a.y * tilePx + tilePx / 2;
       // Floor at 4 CSS px so agents stay visible when the world is
       // auto-fit at a small zoom. Without a floor, a 40×25 world shown
       // at ~0.6 zoom renders agents as ~4-px dots that blur into the
@@ -248,6 +410,18 @@ export class Canvas2DRenderer implements Renderer {
         ctx.fill();
       }
 
+      // Colony halo — a colored ring above the head says "this agent is
+      // Red's". Applied to both sprite and procedural paths; the ring is
+      // small and high so it doesn't fight the body silhouette.
+      const colonyColor = a.colony_id != null ? colonyColorById.get(a.colony_id) : undefined;
+      if (colonyColor) {
+        ctx.strokeStyle = colonyColor;
+        ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
+        ctx.beginPath();
+        ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
       if (a.id === selectedAgentId) {
         const ringGap = Math.max(2, tilePx * 0.22);
         ctx.strokeStyle = '#ff7b3b';
@@ -255,11 +429,12 @@ export class Canvas2DRenderer implements Renderer {
         if (reducedMotion) {
           // Static selection ring — one solid coral circle, no halo,
           // no rotation. The user still needs to see which agent is
-          // picked; motion is the only thing we drop.
+          // picked; motion is the only thing we drop. Ring pinned to
+          // target tile (not lerped body) so it matches hit-tests.
           ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
           ctx.setLineDash([]);
           ctx.beginPath();
-          ctx.arc(cx, cy, r + ringGap, 0, Math.PI * 2);
+          ctx.arc(targetCx, targetCy, r + ringGap, 0, Math.PI * 2);
           ctx.stroke();
         } else {
           // Animated selection — two concentric dashed rings rotating
@@ -276,15 +451,18 @@ export class Canvas2DRenderer implements Renderer {
           const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
           ctx.fillStyle = `rgba(255, 123, 59, ${0.08 + pulse * 0.12})`;
           ctx.beginPath();
-          ctx.arc(cx, cy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
+          ctx.arc(targetCx, targetCy, r + ringGap + 4 + pulse * 3, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
 
-          // Outer dashed ring — rotates clockwise.
+          // Rings anchor to the target tile, not the lerped body, so
+          // the selection indicator matches the click hit-test region
+          // instead of chasing the sprite across the interpolation
+          // window.
           const dash = Math.max(2, tilePx * 0.18);
           ctx.save();
-          ctx.translate(cx, cy);
+          ctx.translate(targetCx, targetCy);
           ctx.rotate(t * 0.6);
           ctx.setLineDash([dash, dash * 0.8]);
           ctx.beginPath();
@@ -292,9 +470,8 @@ export class Canvas2DRenderer implements Renderer {
           ctx.stroke();
           ctx.restore();
 
-          // Inner solid ring — tighter, rotates counter-clockwise.
           ctx.save();
-          ctx.translate(cx, cy);
+          ctx.translate(targetCx, targetCy);
           ctx.rotate(-t * 0.9);
           ctx.setLineDash([]);
           ctx.lineWidth = Math.max(1, tilePx * 0.08);
@@ -304,6 +481,12 @@ export class Canvas2DRenderer implements Renderer {
           ctx.restore();
         }
       }
+    }
+
+    // Fold the frame's positions into the rolling shadow map — next
+    // tick-advance turns this into prevPositions.
+    for (const a of agents) {
+      this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
     }
 
     ctx.restore();
@@ -316,6 +499,9 @@ export class Canvas2DRenderer implements Renderer {
     this.host = null;
     this.lastWidthPx = -1;
     this.lastHeightPx = -1;
+    this.prevPositions.clear();
+    this.lastSeenPositions.clear();
+    this.lastSeenTick = -1;
   }
 }
 

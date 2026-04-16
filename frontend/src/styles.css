@@ -977,3 +977,53 @@ body::after {
   border: 2px solid var(--ground-0);
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--hot); }
+
+/* --- Clock widget (day/phase/progress) ---------------------------------- */
+
+.clock-widget {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  background: rgba(20, 22, 36, 0.8);
+  color: #e8ecf2;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+}
+.clock-widget__main { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.clock-widget__sep { opacity: 0.4; }
+.clock-widget__bar { margin-top: 4px; font-size: 11px; display: flex; gap: 8px; }
+.clock-widget__bar-fill { letter-spacing: 1px; }
+.clock-widget__bar-count { opacity: 0.7; }
+
+/* --- Phase tint overlay ------------------------------------------------- */
+
+.phase-tint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  transition: background-color 1s ease;
+  mix-blend-mode: multiply;
+}
+.phase-tint[data-phase="dawn"]  { background-color: rgba(255, 165,  80, 0.15); }
+.phase-tint[data-phase="day"]   { background-color: rgba(  0,   0,   0, 0.00); }
+.phase-tint[data-phase="dusk"]  { background-color: rgba(150,  80, 180, 0.20); }
+.phase-tint[data-phase="night"] { background-color: rgba( 20,  30,  80, 0.45); }
+
+/* --- Colony panel ------------------------------------------------------- */
+
+.colony-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 2px;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
+.colony-row__swatch {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.25);
+}
+.colony-row__name { font-weight: 600; min-width: 54px; }
+.colony-row__stat { opacity: 0.78; }

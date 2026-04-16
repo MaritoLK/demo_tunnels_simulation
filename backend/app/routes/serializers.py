@@ -8,6 +8,7 @@ Field renames happen here (not in the engine or models):
     matches the engine's internal event key and keeps the REST surface
     consistent with what clients see in the `/step` response.
 """
+from app.engine import cycle
 
 
 def agent_to_dict(agent):
@@ -23,6 +24,7 @@ def agent_to_dict(agent):
         'health': agent.health,
         'age': agent.age,
         'alive': agent.alive,
+        'colony_id': agent.colony_id,
     }
 
 
@@ -33,6 +35,21 @@ def tile_to_dict(tile):
         'terrain': tile.terrain,
         'resource_type': tile.resource_type,
         'resource_amount': tile.resource_amount,
+        'crop_state': tile.crop_state,
+        'crop_growth_ticks': tile.crop_growth_ticks,
+        'crop_colony_id': tile.crop_colony_id,
+    }
+
+
+def colony_to_dict(colony):
+    return {
+        'id': colony.id,
+        'name': colony.name,
+        'color': colony.color,
+        'camp_x': colony.camp_x,
+        'camp_y': colony.camp_y,
+        'food_stock': colony.food_stock,
+        'growing_count': colony.growing_count,
     }
 
 
@@ -61,6 +78,8 @@ def simulation_summary(sim, control):
         'alive_count': len(sim.alive_agents),
         'running': control['running'],
         'speed': control['speed'],
+        'day': cycle.day_for(sim.current_tick),
+        'phase': cycle.phase_for(sim.current_tick),
     }
 
 

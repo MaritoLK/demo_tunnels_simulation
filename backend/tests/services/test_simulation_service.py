@@ -4,8 +4,13 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from app import db, models
-from app.services import simulation_service
+from app.services import simulation_service, mappers
 from app.services.exceptions import SimulationNotFoundError
+from app.engine.colony import EngineColony
+from app.engine.world import Tile
+from app.engine.agent import Agent
+from app.engine import config as engine_config
+from app.engine import cycle
 
 
 def _snapshot(sim):
@@ -217,3 +222,176 @@ def test_event_fk_restricts_agent_delete(db_session):
     # SQLSTATE; asserting it documents the contract exactly.
     assert exc_info.value.orig.pgcode == '23001'
     db.session.rollback()
+
+
+def test_colony_model_imports_and_has_expected_columns(db_session):
+    c = models.Colony(name='Red', color='#e74c3c', camp_x=3, camp_y=3, food_stock=18)
+    db.session.add(c)
+    db.session.flush()
+    assert c.id is not None
+    assert c.name == 'Red'
+    assert c.food_stock == 18
+
+
+def test_colony_to_row_and_back_round_trip():
+    ec = EngineColony(id=None, name='Red', color='#e74c3c',
+                      camp_x=3, camp_y=3, food_stock=18)
+    row = mappers.colony_to_row(ec)
+    assert row.name == 'Red'
+    assert row.food_stock == 18
+    # round-trip
+    restored = mappers.row_to_colony(row)
+    assert restored.name == ec.name
+    assert restored.camp_x == ec.camp_x
+    assert restored.food_stock == ec.food_stock
+
+
+def test_tile_mapping_preserves_crop_fields():
+    t = Tile(x=1, y=2, terrain='grass',
+             crop_state='growing', crop_growth_ticks=15, crop_colony_id=7)
+    row = mappers.tile_to_row(t)
+    assert row.crop_state == 'growing'
+    assert row.crop_growth_ticks == 15
+    assert row.crop_colony_id == 7
+    back = mappers.row_to_tile(row)
+    assert back.crop_state == 'growing'
+    assert back.crop_colony_id == 7
+
+
+def test_agent_mapping_preserves_colony_id():
+    a = Agent('A', 0, 0, agent_id=None, colony_id=3)
+    row = mappers.agent_to_row(a)
+    assert row.colony_id == 3
+    back = mappers.row_to_agent(row)
+    assert back.colony_id == 3
+
+
+def test_create_simulation_spawns_four_colonies_at_corners(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    rows = db.session.query(models.Colony).order_by(models.Colony.id).all()
+    assert len(rows) == 4
+    expected = [(3, 3), (16, 3), (3, 16), (16, 16)]
+    got = [(r.camp_x, r.camp_y) for r in rows]
+    assert got == expected
+    palette = [(r.name, r.color) for r in rows]
+    assert palette == simulation_service.DEFAULT_COLONY_PALETTE
+    from app.engine import config
+    for r in rows:
+        assert r.food_stock == config.INITIAL_FOOD_STOCK
+
+
+def test_create_simulation_distributes_agents_across_colonies(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    counts = dict(db.session.query(
+        models.Agent.colony_id, db.func.count(models.Agent.id)
+    ).group_by(models.Agent.colony_id).all())
+    assert len(counts) == 4
+    for _, n in counts.items():
+        assert n == 3
+
+
+def test_create_simulation_rejects_half_set_colony_kwargs(db_session):
+    # colonies=K without agents_per_colony would previously fall through to
+    # the legacy branch *after* flushing Colony rows — orphan-colony sim.
+    with pytest.raises(ValueError, match='must be passed together'):
+        simulation_service.create_simulation(
+            width=20, height=20, seed=1, colonies=4,
+        )
+    with pytest.raises(ValueError, match='must be passed together'):
+        simulation_service.create_simulation(
+            width=20, height=20, seed=1, agents_per_colony=3,
+        )
+    # And no Colony rows were flushed — guard runs before side effects.
+    assert db.session.query(models.Colony).count() == 0
+
+
+_DAY_PHASE_START = cycle.PHASES.index('day') * cycle.TICKS_PER_PHASE
+_DAWN_PHASE_START = cycle.PHASES.index('dawn') * cycle.TICKS_PER_PHASE
+
+
+def test_step_simulation_persists_planted_tile_state(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    target = None
+    for row in sim.world.tiles:
+        for t in row:
+            if t.terrain == 'grass' and t.resource_amount == 0 and t.crop_state == 'none':
+                target = t
+                break
+        if target:
+            break
+    assert target is not None
+    agent.x, agent.y = target.x, target.y
+    sim.current_tick = _DAY_PHASE_START
+    simulation_service.step_simulation(ticks=1)
+    row = db.session.query(models.WorldTile).filter_by(x=target.x, y=target.y).one()
+    assert row.crop_state == 'growing'
+    assert row.crop_colony_id == agent.colony_id
+
+
+def test_step_simulation_persists_harvested_stock(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    t = sim.world.get_tile(agent.x, agent.y)
+    t.crop_state = 'mature'
+    t.resource_amount = engine_config.HARVEST_YIELD
+    t.crop_colony_id = 999
+    sim.current_tick = _DAY_PHASE_START
+    simulation_service.step_simulation(ticks=1)
+    c_row = db.session.query(models.Colony).filter_by(id=agent.colony_id).one()
+    assert c_row.food_stock == engine_config.INITIAL_FOOD_STOCK + engine_config.HARVEST_YIELD
+
+
+def test_step_simulation_persists_ate_from_cache_stock_debit(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    colony = sim.colonies[agent.colony_id]
+    agent.x, agent.y = colony.camp_x, colony.camp_y
+    agent.hunger = 50.0
+    # All colony members spawn at camp (create_simulation default), so
+    # on tick 0 they would all eat — debit would be 3 * EAT_COST. Move
+    # siblings off-camp so the assertion isolates a single eat event.
+    for other in sim.agents:
+        if other.colony_id == colony.id and other.id != agent.id:
+            other.x, other.y = 0, 0
+    sim.current_tick = _DAWN_PHASE_START
+    initial_stock = colony.food_stock
+    simulation_service.step_simulation(ticks=1)
+    c_row = db.session.query(models.Colony).filter_by(id=colony.id).one()
+    assert c_row.food_stock == initial_stock - engine_config.EAT_COST
+
+
+def test_load_current_simulation_restores_colonies(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    simulation_service.step_simulation(ticks=5)
+    simulation_service._reset_cache()
+    sim = simulation_service.load_current_simulation()
+    assert len(sim.colonies) == 4
+    # growing_count is recomputed from tiles after reload.
+    for c in sim.colonies.values():
+        assert c.growing_count >= 0
+    # T19 contract: reloaded sim must step without KeyError if a
+    # harvest/eat event fires (_update_dirty_colonies indexes sim.colonies
+    # direct). step_simulation re-seats the cache via get_current_simulation.
+    simulation_service.step_simulation(ticks=1)

@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 
 import { ApiError } from './api/client';
 import {
+  useColonies,
   useCreateSimulation,
   useSimControl,
   useSimulation,
   useStepSimulation,
 } from './api/queries';
 import { AgentPanel } from './components/AgentPanel';
+import { ClockWidget } from './components/ClockWidget';
+import { ColonyPanel } from './components/ColonyPanel';
 import { EmptyState } from './components/EmptyState';
 import { EventLog } from './components/EventLog';
 import { WorldCanvas } from './components/WorldCanvas';
@@ -16,14 +19,16 @@ import { nextTickPulseState } from './state/tickPulse';
 
 export function App() {
   const sim = useSimulation();
+  const colonies = useColonies();
   const createSim = useCreateSimulation();
   const stepSim = useStepSimulation();
   const simControl = useSimControl();
 
-  const [width, setWidth] = useState(40);
-  const [height, setHeight] = useState(25);
+  const [width, setWidth] = useState(60);
+  const [height, setHeight] = useState(60);
   const [seed, setSeed] = useState(42);
-  const [agentCount, setAgentCount] = useState(5);
+  const [colonyCount, setColonyCount] = useState(4);
+  const [agentsPerColony, setAgentsPerColony] = useState(3);
   const [steps, setSteps] = useState(1);
 
   // Tick pulse — the one bit of attention-grabbing motion. Everything else
@@ -61,10 +66,19 @@ export function App() {
           <LabeledNumber label="width" value={width} onChange={setWidth} />
           <LabeledNumber label="height" value={height} onChange={setHeight} />
           <LabeledNumber label="seed" value={seed} onChange={setSeed} />
-          <LabeledNumber label="agents" value={agentCount} onChange={setAgentCount} />
+          <LabeledNumber label="colonies" value={colonyCount} onChange={setColonyCount} />
+          <LabeledNumber label="agents/colony" value={agentsPerColony} onChange={setAgentsPerColony} />
           <button
             className="btn btn--primary"
-            onClick={() => createSim.mutate({ width, height, seed, agent_count: agentCount })}
+            onClick={() =>
+              createSim.mutate({
+                width,
+                height,
+                seed,
+                colonies: colonyCount,
+                agents_per_colony: agentsPerColony,
+              })
+            }
             disabled={createSim.isPending}
           >
             <span className="btn__ico">✦</span>
@@ -147,6 +161,8 @@ export function App() {
           )}
         </section>
 
+        <ColonyPanel colonies={colonies.data ?? []} />
+
         <AgentPanel />
 
         <EventLog />
@@ -191,10 +207,21 @@ export function App() {
           </div>
         </header>
 
+        {sim.data && (
+          <ClockWidget
+            day={sim.data.day}
+            phase={sim.data.phase}
+            tick={sim.data.tick}
+          />
+        )}
+
         <section className="observe">
           <div className="observe__frame">
             <div className="observe__glow" />
             <WorldCanvas />
+            {sim.data && (
+              <div className="phase-tint" data-phase={sim.data.phase} />
+            )}
             {simStatus === 'none' && <EmptyState />}
           </div>
         </section>

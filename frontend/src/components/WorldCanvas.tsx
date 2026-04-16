@@ -27,7 +27,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 
 import { ApiError } from '../api/client';
-import { useAgents, useSimulation, useWorld } from '../api/queries';
+import { useAgents, useColonies, useSimulation, useWorld } from '../api/queries';
 import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
 import { isReducedMotion } from '../state/reducedMotion';
@@ -76,6 +76,7 @@ export function WorldCanvas() {
   const sim = useSimulation();
   const world = useWorld();
   const agents = useAgents();
+  const colonies = useColonies();
   const zoom = useViewStore((s) => s.zoom);
   const cameraX = useViewStore((s) => s.cameraX);
   const cameraY = useViewStore((s) => s.cameraY);
@@ -98,6 +99,7 @@ export function WorldCanvas() {
       height: world.data.height,
       tiles: world.data.tiles,
       agents: agents.data ?? [],
+      colonies: colonies.data ?? [],
       tilePx,
       cameraX,
       cameraY,
@@ -106,8 +108,9 @@ export function WorldCanvas() {
       // the OS preference can toggle while the app is running, and
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
+      currentTick: sim.data?.tick ?? 0,
     };
-  }, [world.data, agents.data, tilePx, cameraX, cameraY, selectedAgentId]);
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, sim.data?.tick]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {
