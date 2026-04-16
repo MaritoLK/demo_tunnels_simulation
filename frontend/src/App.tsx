@@ -8,6 +8,7 @@ import {
   useStepSimulation,
 } from './api/queries';
 import { AgentPanel } from './components/AgentPanel';
+import { ClockWidget } from './components/ClockWidget';
 import { EmptyState } from './components/EmptyState';
 import { EventLog } from './components/EventLog';
 import { WorldCanvas } from './components/WorldCanvas';
@@ -191,10 +192,21 @@ export function App() {
           </div>
         </header>
 
+        {sim.data && (
+          <ClockWidget
+            day={sim.data.day}
+            phase={sim.data.phase}
+            tick={sim.data.tick}
+          />
+        )}
+
         <section className="observe">
           <div className="observe__frame">
             <div className="observe__glow" />
             <WorldCanvas />
+            {sim.data && (
+              <div className="phase-tint" data-phase={sim.data.phase} />
+            )}
             {simStatus === 'none' && <EmptyState />}
           </div>
         </section>
