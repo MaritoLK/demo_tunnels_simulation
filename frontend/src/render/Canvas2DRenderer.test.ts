@@ -65,7 +65,10 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
   return {
     width: 1,
     height: 1,
-    tiles: [[{ x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0 }]],
+    tiles: [[{
+      x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0,
+      crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null,
+    }]],
     agents: [
       {
         id: 7,
@@ -79,6 +82,7 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
         age: 0,
         state: 'idle',
         alive: true,
+        colony_id: null,
       },
     ],
     tilePx: 32,
