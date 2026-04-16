@@ -98,3 +98,35 @@ def test_plant_grow_harvest_lineage(db_session):
         f'food_stock delta {stock_post - stock_pre} < HARVEST_YIELD '
         f'{config.HARVEST_YIELD}'
     )
+
+
+def test_300_tick_arc_has_multi_colony_harvest(db_session):
+    """Unforced 300-tick run: at least 2 colonies should harvest at least
+    one crop each, with `crop_matured` lineage back to a `planted` event.
+    If fewer than 2 colonies participate, balance needs retuning.
+    """
+    simulation_service.create_simulation(
+        width=20, height=20, seed=42,
+        colonies=4, agents_per_colony=3,
+    )
+    all_events = simulation_service.step_simulation(ticks=300)
+
+    planted_by_coord = {
+        (e['data']['tile_x'], e['data']['tile_y']): e['data']['colony_id']
+        for e in all_events if e['type'] == 'planted'
+    }
+    matured_coords = {
+        (e['data']['tile_x'], e['data']['tile_y'])
+        for e in all_events if e['type'] == 'crop_matured'
+    }
+    # Every matured coord must trace back to a prior planted event
+    # (same simulation, so lineage is guaranteed if the engine is honest).
+    for coord in matured_coords:
+        assert coord in planted_by_coord, f'matured without planted: {coord}'
+
+    harvesting_colonies = {
+        e['data']['colony_id']
+        for e in all_events if e['type'] == 'harvested'
+    }
+    assert len(harvesting_colonies) >= 2, \
+        f'only {len(harvesting_colonies)} colonies harvested; balance likely off'
