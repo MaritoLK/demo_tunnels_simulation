@@ -22,9 +22,8 @@ def test_night_phase_hunger_decays_at_half_rate():
     rng = random.Random(1)
     tick_agent(a_day, w, [a_day], {1: _colony()}, phase='day', rng=rng)
     tick_agent(a_night, w, [a_night], {1: _colony()}, phase='night', rng=rng)
-    day_delta = 80.0 - a_day.hunger
-    night_delta = 80.0 - a_night.hunger
-    assert night_delta == day_delta * needs.NIGHT_HUNGER_SCALE
+    assert 80.0 - a_day.hunger == needs.HUNGER_DECAY
+    assert 80.0 - a_night.hunger == needs.HUNGER_DECAY * needs.NIGHT_HUNGER_SCALE
 
 
 def test_ate_this_dawn_flag_clears_outside_dawn():

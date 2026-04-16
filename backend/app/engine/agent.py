@@ -179,7 +179,16 @@ def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng
         events.append(actions.die(agent))
         return events
 
+    # Invariant: when the new path is live, every agent belongs to a colony
+    # in the map. A miss means a data-drift bug (stale colony_id, test setup
+    # gap). Fail loud — the legacy decide_action fallback would silently
+    # bypass phase gates (night→rest, dusk→step_to_camp, dawn→eat_camp).
     colony = colonies_by_id.get(agent.colony_id)
+    if colony is None:
+        raise KeyError(
+            f"Agent {agent.id!r} has colony_id={agent.colony_id!r} "
+            f"not in colonies_by_id {list(colonies_by_id)!r}"
+        )
     action_name = decide_action(agent, world, colony, phase)
     events.append(execute_action(action_name, agent, world, all_agents, colony, rng=rng))
 
