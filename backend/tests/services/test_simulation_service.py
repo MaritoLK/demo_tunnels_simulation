@@ -262,3 +262,41 @@ def test_agent_mapping_preserves_colony_id():
     assert row.colony_id == 3
     back = mappers.row_to_agent(row)
     assert back.colony_id == 3
+
+
+DEFAULT_COLONY_PALETTE = [
+    ('Red',    '#e74c3c'),
+    ('Blue',   '#3498db'),
+    ('Green',  '#2ecc71'),
+    ('Yellow', '#f1c40f'),
+]
+
+
+def test_create_simulation_spawns_four_colonies_at_corners(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    rows = db.session.query(models.Colony).order_by(models.Colony.id).all()
+    assert len(rows) == 4
+    expected = [(3, 3), (16, 3), (3, 16), (16, 16)]
+    got = [(r.camp_x, r.camp_y) for r in rows]
+    assert got == expected
+    palette = [(r.name, r.color) for r in rows]
+    assert palette == DEFAULT_COLONY_PALETTE
+    from app.engine import config
+    for r in rows:
+        assert r.food_stock == config.INITIAL_FOOD_STOCK
+
+
+def test_create_simulation_distributes_agents_across_colonies(db_session):
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    counts = dict(db.session.query(
+        models.Agent.colony_id, db.func.count(models.Agent.id)
+    ).group_by(models.Agent.colony_id).all())
+    assert len(counts) == 4
+    for _, n in counts.items():
+        assert n == 3
