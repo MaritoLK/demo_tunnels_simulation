@@ -18,6 +18,7 @@ def agent_to_row(agent):
         age=agent.age,
         alive=agent.alive,
         colony_id=agent.colony_id,
+        cargo=agent.cargo,
     )
 
 
@@ -30,6 +31,7 @@ def row_to_agent(row):
     a.health = row.health
     a.age = row.age
     a.alive = row.alive
+    a.cargo = row.cargo
     return a
 
 
@@ -47,6 +49,7 @@ def update_agent_row(row, engine_agent):
     row.health = engine_agent.health
     row.age = engine_agent.age
     row.alive = engine_agent.alive
+    row.cargo = engine_agent.cargo
 
 
 def tile_to_row(tile):

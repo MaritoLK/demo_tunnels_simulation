@@ -10,5 +10,5 @@ class Colony(db.Model):
     camp_x = db.Column(db.Integer, nullable=False)
     camp_y = db.Column(db.Integer, nullable=False)
     food_stock = db.Column(
-        db.Integer, nullable=False, default=0, server_default='0',
+        db.Float, nullable=False, default=0.0, server_default='0',
     )
