@@ -18,7 +18,11 @@ dist/
 # Personal study notes
 STUDY_NOTES.md
 
-docs/
+# docs/ is mostly local-only, but design specs are versioned
+docs/*
+!docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
 
 INTERVIEW_DEFENSE.md
 
