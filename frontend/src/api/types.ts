@@ -47,6 +47,9 @@ export interface Agent {
   // Their social need decays ~4× faster, making them the most likely
   // candidates to tip into rogue within a demo window.
   loner?: boolean;
+  // Units of food in the agent's pouch (0..CARRY_MAX). Drained by
+  // deposit at camp. Optional for legacy snapshots pre-cargo.
+  cargo?: number;
 }
 
 export interface Colony {

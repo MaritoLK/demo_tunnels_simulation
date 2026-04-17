@@ -25,7 +25,6 @@
 import type { Renderer, FrameSnapshot } from './Renderer';
 import type { Terrain } from '../api/types';
 import {
-  BUSH_FRAME_PX,
   HOUSE_FRAME_H,
   HOUSE_FRAME_W,
   loadSprites,
@@ -63,11 +62,32 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
   stone: '#d0d0d8', // light stone
 };
 
-// Units of food consumed per forage action. Mirrors backend
-// needs.FORAGE_TILE_DEPLETION. Small magic number duplicated across the
-// wire boundary rather than added to every /world/state payload — it
-// only drives a cosmetic serving badge.
-const FORAGE_SERVING = 2;
+// Mirrors backend needs.CARRY_MAX. Used to scale the cargo pip's size
+// so a nearly-full pouch reads visibly bigger than a couple of units.
+const CARRY_MAX = 8;
+
+// Action label styling — one short word per engine state, each tinted
+// distinctly so you can read what the colony is doing at a glance
+// without hovering each agent. Keys MUST match backend actions.STATE_*
+// strings (wire contract). Dead agents get no label — the fade already
+// reads as "stopped."
+const STATE_LABEL: Record<string, { text: string; color: string }> = {
+  foraging:    { text: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
+  resting:     { text: 'rest',    color: '#6b9bd4' }, // sky blue — calm
+  socialising: { text: 'social',  color: '#d870c9' }, // magenta — warmth
+  exploring:   { text: 'explore', color: '#5cbd4a' }, // green — go
+  traversing:  { text: 'trek',    color: '#c08a4a' }, // tan — terrain drag
+  planting:    { text: 'plant',   color: '#7ee070' }, // bright green — matches growing dot
+  harvesting:  { text: 'harvest', color: '#ffd23f' }, // gold — matches mature dot
+  depositing:  { text: 'deposit', color: '#4ec9d4' }, // cyan — inflow
+  eating:      { text: 'eat',     color: '#ff6b8a' }, // pink-red — appetite
+  idle:        { text: 'idle',    color: '#8a8a93' }, // muted grey
+};
+
+// Below this tile size the label is unreadable and just adds clutter.
+// Matched to the food-badge threshold (≥14 CSS px) so both overlays
+// appear/disappear at the same zoom level.
+const LABEL_MIN_TILE_PX = 14;
 
 export class Canvas2DRenderer implements Renderer {
   private host: HTMLElement | null = null;
@@ -150,7 +170,7 @@ export class Canvas2DRenderer implements Renderer {
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, reducedMotion, currentTick,
+      selectedAgentId, selectedTile, reducedMotion, currentTick,
     } = snap;
 
     // Tick-advance bookkeeping for inter-poll interpolation. Runs
@@ -235,13 +255,15 @@ export class Canvas2DRenderer implements Renderer {
               0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
               px + meatOffset, py + meatOffset, meatSize, meatSize,
             );
-            // Serving count badge — one meat sprite can hold several
-            // forage actions' worth of food. Without this, the sprite
-            // looks identical after each forage until it vanishes on
-            // the last serving. Only show ≥2 servings; "×1" is noise.
-            const servings = Math.ceil(tile.resource_amount / FORAGE_SERVING);
-            if (servings >= 2 && tilePx >= 14) {
-              drawFoodBadge(ctx, servings, px, py, tilePx);
+            // Food-unit badge — shows the tile's raw resource_amount
+            // so the number matches what the TilePanel reads out. An
+            // earlier revision counted "servings" (amount/FORAGE_SERVING),
+            // but that made a 9-unit tile show ×5, which looked like a
+            // bug every time someone opened the panel. Tile sprites now
+            // count down 1-for-1 with forages.
+            const units = Math.ceil(tile.resource_amount);
+            if (units >= 2 && tilePx >= 14) {
+              drawFoodBadge(ctx, units, px, py, tilePx);
             }
           }
           // Wood/stone: no overlay. The bush/rock decoration sprite
@@ -337,11 +359,13 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Crop overlay. Growing → small bush sprite at ~50% tile scale so a
-    // sprout reads as a young plant, not a grass-colored dot colliding
-    // with grass terrain. Mature → yellow fill dot (no asset in the free
-    // pack conveys "ripe crop" better than a gold pip). Falls back to
-    // the dot-pair in the procedural path for headless tests.
+    // Crop overlay — paired dots, same style across states:
+    //   growing → green dot (planted, not yet ripe)
+    //   mature  → yellow dot (harvestable)
+    // Earlier revisions drew a bush sprite for 'growing' when the atlas
+    // was loaded, but the sprite collided visually with wild bush
+    // decorations on forest tiles. Uniform-dot style (green↔yellow)
+    // reads like a simple state change rather than two different things.
     for (let y = 0; y < height; y++) {
       const row = tiles[y];
       if (!row) continue;
@@ -350,26 +374,35 @@ export class Canvas2DRenderer implements Renderer {
         if (!t || t.crop_state === 'none') continue;
         const ccx = x * tilePx + tilePx / 2;
         const ccy = y * tilePx + tilePx / 2;
-        if (sprites && t.crop_state === 'growing') {
-          const bushSize = tilePx * 0.55;
-          const bushX = ccx - bushSize / 2;
-          const bushY = ccy - bushSize / 2;
-          ctx.drawImage(
-            sprites.bush,
-            0, 0, BUSH_FRAME_PX, BUSH_FRAME_PX,
-            bushX, bushY, bushSize, bushSize,
-          );
-        } else {
-          const cr = Math.max(2, tilePx * 0.22);
-          ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
-          ctx.beginPath();
-          ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-          ctx.lineWidth = Math.max(1, tilePx * 0.06);
-          ctx.stroke();
-        }
+        const cr = Math.max(2, tilePx * 0.22);
+        ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+        ctx.beginPath();
+        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.06);
+        ctx.stroke();
       }
+    }
+
+    // Tile selection ring — drawn between tile sprites and agents so a
+    // pawn standing on the selected tile stays readable on top of the
+    // ring. Dashed square with a soft inner glow; size tracks tilePx
+    // so it reads at any zoom that allows it.
+    if (selectedTile) {
+      // Inside the camera translate (see ctx.translate(cameraX,cameraY)
+      // earlier in drawFrame), so world-space tile coords suffice — no
+      // camera offset here or the ring lands off by (cameraX, cameraY).
+      const tx = selectedTile.x * tilePx;
+      const ty = selectedTile.y * tilePx;
+      ctx.save();
+      ctx.lineWidth = Math.max(2, tilePx * 0.06);
+      ctx.strokeStyle = '#ffd23f';
+      ctx.setLineDash([Math.max(4, tilePx * 0.15), Math.max(3, tilePx * 0.1)]);
+      const inset = Math.max(2, tilePx * 0.08);
+      ctx.strokeRect(tx + inset, ty + inset, tilePx - inset * 2, tilePx - inset * 2);
+      ctx.setLineDash([]);
+      ctx.restore();
     }
 
     // Colony color lookup — O(1) per agent in the loop below. Built once
@@ -479,6 +512,26 @@ export class Canvas2DRenderer implements Renderer {
         ctx.fill();
       }
 
+      // Cargo pip — small brown satchel at top-right of the pawn when
+      // the agent is carrying anything. Radius scales with fullness
+      // (minimum visible even at 1 unit, max at CARRY_MAX) so the
+      // pouch visibly "swells" between forage and deposit. Skipped
+      // for dead agents — corpses don't haul.
+      const cargo = a.alive ? a.cargo ?? 0 : 0;
+      if (cargo > 0) {
+        const fill = Math.min(1, cargo / CARRY_MAX);
+        const pipR = Math.max(2, r * (0.18 + 0.22 * fill));
+        const pipCx = cx + r * 0.55;
+        const pipCy = cy - r * 0.55;
+        ctx.fillStyle = '#6b3e1a';
+        ctx.beginPath();
+        ctx.arc(pipCx, pipCy, pipR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = Math.max(1, tilePx * 0.05);
+        ctx.stroke();
+      }
+
       // Colony halo — a colored ring above the head says "this agent is
       // Red's". Applied to both sprite and procedural paths; the ring is
       // small and high so it doesn't fight the body silhouette.
@@ -498,6 +551,31 @@ export class Canvas2DRenderer implements Renderer {
         ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+      }
+
+      // Action label — one short, color-coded word floating above the
+      // head. Lets a viewer see "the Blue colony is all foraging" at a
+      // glance without selecting each pawn. Drawn as stroke-then-fill
+      // so the text stays legible over any terrain (forest, sand, and
+      // the pawn sprite itself all compete for contrast). Skip dead
+      // agents (their fade already says "stopped") and skip when the
+      // tile is too small to render a readable glyph.
+      const meta = a.alive ? STATE_LABEL[a.state] : undefined;
+      if (meta && tilePx >= LABEL_MIN_TILE_PX) {
+        // Anchor above the colony halo: halo sits at cy - r*0.4 with
+        // radius r*0.55, so its top is cy - 0.95*r. Labels at cy - 1.4*r
+        // clear the halo by ~0.45r and don't collide with the cargo pip
+        // (top-right at cy - 0.55r).
+        const fontPx = Math.max(9, Math.floor(tilePx * 0.34));
+        ctx.font = `600 ${fontPx}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        const labelY = cy - r * 1.4;
+        ctx.lineWidth = Math.max(2, tilePx * 0.09);
+        ctx.strokeStyle = 'rgba(10,12,18,0.85)';
+        ctx.strokeText(meta.text, cx, labelY);
+        ctx.fillStyle = meta.color;
+        ctx.fillText(meta.text, cx, labelY);
       }
 
       if (a.id === selectedAgentId) {

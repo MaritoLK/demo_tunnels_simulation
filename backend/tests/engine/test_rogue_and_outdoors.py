@@ -144,12 +144,18 @@ def test_rogue_dusk_does_not_step_to_camp():
 
 # ─── night rest behaviour ─────────────────────────────────────────────
 
-def test_night_at_camp_rests_normally():
+def test_night_at_camp_rests_outdoors_post_rework():
+    """Post 'remove forced returns': night is always rest_outdoors even
+    on a camp tile. Previous revision branched on at-camp to pick
+    'rest' (full recovery) vs 'rest_outdoors' (half recovery); the
+    split pulled the whole colony back to camp every night and the
+    demo showed 12 motionless pawns on 4 tiles. Uniform rest_outdoors
+    keeps the rhythm but spreads agents across the map."""
     c = _colony(camp=(0, 0))
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     w = _grass_world()
     action = decide_action(a, w, c, phase='night')
-    assert action == 'rest'
+    assert action == 'rest_outdoors'
 
 
 def test_night_far_from_camp_rests_outdoors():

@@ -381,6 +381,42 @@ def test_step_simulation_persists_ate_from_cache_stock_debit(db_session):
     assert c_row.food_stock == initial_stock - engine_config.EAT_COST
 
 
+def test_step_simulation_persists_deposit_stock_credit(db_session):
+    """Regression guard: a cargo deposit must bump the colony's DB row.
+
+    The dirty-colony filter used to track only 'harvested' and
+    'ate_from_cache' — 'deposited' bumped colony.food_stock in memory
+    but never persisted. A Flask restart then reloaded the stale DB
+    value and the pouched food silently vanished. This test constructs
+    the single-deposit case and asserts the DB row moved.
+    """
+    from app.engine import needs
+    simulation_service.create_simulation(
+        width=20, height=20, seed=1,
+        colonies=4, agents_per_colony=3,
+    )
+    sim = simulation_service.get_current_simulation()
+    agent = sim.agents[0]
+    colony = sim.colonies[agent.colony_id]
+    # Park agent on camp with cargo to drop. Nudge hunger/energy full so
+    # decide_action doesn't preempt with a survival action, and move
+    # siblings off-camp so a concurrent eat_camp doesn't muddy the delta.
+    agent.x, agent.y = colony.camp_x, colony.camp_y
+    agent.hunger = needs.NEED_MAX
+    agent.energy = needs.NEED_MAX
+    agent.cargo = 4.0
+    for other in sim.agents:
+        if other.colony_id == colony.id and other.id != agent.id:
+            other.x, other.y = 0, 0
+    # Day phase so decide_action hits the carry loop (at-camp + cargo>0
+    # → 'deposit'). Dawn would route to eat_camp first.
+    sim.current_tick = _DAY_PHASE_START
+    initial_stock = colony.food_stock
+    simulation_service.step_simulation(ticks=1)
+    c_row = db.session.query(models.Colony).filter_by(id=colony.id).one()
+    assert c_row.food_stock == initial_stock + 4.0
+
+
 def test_load_current_simulation_restores_colonies(db_session):
     simulation_service.create_simulation(
         width=20, height=20, seed=1,

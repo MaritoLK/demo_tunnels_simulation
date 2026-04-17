@@ -69,32 +69,43 @@ def test_dawn_phase_on_camp_returns_eat_when_hungry_and_stock():
     assert decide_action(a, w, c, 'dawn') == 'eat_camp'
 
 
-def test_dawn_phase_off_camp_steps_toward_camp():
+def test_dawn_phase_off_camp_is_productive():
+    """Post-rework: dawn off-camp does NOT force a march home. The agent
+    drops into the day chain and works the tile (plant on an empty
+    grass tile). Forcing step_to_camp made the demo feel flat — see
+    'remove forced returns' change."""
     w = _grass_world()
     a = _fresh_agent(x=2, y=2)
     c = _colony()
-    assert decide_action(a, w, c, 'dawn') == 'step_to_camp'
+    assert decide_action(a, w, c, 'dawn') == 'plant'
 
 
-def test_dusk_phase_always_steps_toward_camp():
+def test_dusk_phase_is_productive():
+    """Post-rework: dusk no longer forces step_to_camp. Agents keep
+    working until night, when they sleep where they stand."""
     w = _grass_world()
     a = _fresh_agent(x=2, y=2)
-    assert decide_action(a, w, _colony(), 'dusk') == 'step_to_camp'
+    assert decide_action(a, w, _colony(), 'dusk') == 'plant'
 
 
-def test_night_phase_at_camp_returns_rest():
-    """Night behaviour split post-outdoors: at camp → full rest.
-    Off-camp night rest is covered in test_rogue_and_outdoors."""
+def test_night_phase_rests_outdoors_anywhere():
+    """Post-rework: night is always rest_outdoors, even at camp. Forcing
+    everyone back to camp for the rest phase turned half the day into
+    idle pawns on one tile. Outdoors rest still recovers energy (at
+    half rate), so the day-is-productive / night-is-sleep rhythm holds."""
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
-    assert decide_action(a, w, _colony(), 'night') == 'rest'
+    assert decide_action(a, w, _colony(), 'night') == 'rest_outdoors'
+    a_field = _fresh_agent(x=2, y=2)  # off camp
+    assert decide_action(a_field, w, _colony(), 'night') == 'rest_outdoors'
 
 
-def test_dawn_on_camp_full_hunger_returns_rest_not_sham_step():
-    """Guard for review issue #2: at-camp agent at dawn who can't eat
-    should rest, not emit a misleading 'headed toward camp' event."""
+def test_dawn_on_camp_full_hunger_is_productive():
+    """Post-rework: at-camp agent at dawn who can't eat falls through
+    to day-chain productivity instead of sham-resting. Planting on an
+    empty camp tile is the natural choice."""
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
     a.hunger = needs.NEED_MAX  # can't eat
     c = _colony()
-    assert decide_action(a, w, c, 'dawn') == 'rest'
+    assert decide_action(a, w, c, 'dawn') == 'plant'

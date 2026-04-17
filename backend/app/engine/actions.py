@@ -32,6 +32,10 @@ STATE_FORAGING = 'foraging'
 STATE_SOCIALISING = 'socialising'
 STATE_EXPLORING = 'exploring'
 STATE_TRAVERSING = 'traversing'
+STATE_PLANTING = 'planting'
+STATE_HARVESTING = 'harvesting'
+STATE_DEPOSITING = 'depositing'
+STATE_EATING = 'eating'
 STATE_DEAD = 'dead'
 
 
@@ -83,6 +87,48 @@ def _first_step_bfs(agent, target_x, target_y, world):
             first_dir[(nx, ny)] = this_first
             queue.append((nx, ny, depth + 1))
     return None
+
+
+def _bfs_first_reachable(agent, world, predicate):
+    """Flood BFS from agent. Return (first_step, target_tile) for the
+    nearest walkable tile whose own tile satisfies `predicate`, or
+    (None, None) if none reachable within PATH_SEARCH_HORIZON.
+
+    Unlike find_nearest_tile (Manhattan, ignores walkability), this
+    pass guarantees the tile is actually reachable — fixes two bugs:
+      * Target on an island / behind water → step_toward returned
+        None and the agent fell through to random-walk explore
+        ("up/down/up/down with food to the left" report).
+      * Nearer target gets depleted by another agent → find_nearest
+        flipped between ticks → BFS first-step flipped → visible
+        oscillation. One flood picks the closest REACHABLE tile
+        deterministically (BFS is FIFO on the direction list, so
+        ties break consistently across ticks).
+
+    The agent's own tile is not reported back as a target; callers
+    should check the own tile separately before invoking this.
+    """
+    sx, sy = agent.x, agent.y
+    first_dir = {(sx, sy): None}
+    queue = deque([(sx, sy, 0)])
+    while queue:
+        x, y, depth = queue.popleft()
+        if (x, y) != (sx, sy) and predicate(world.get_tile(x, y)):
+            return first_dir[(x, y)], world.get_tile(x, y)
+        if depth >= PATH_SEARCH_HORIZON:
+            continue
+        for ddx, ddy in DIRECTIONS:
+            nx, ny = x + ddx, y + ddy
+            if (nx, ny) in first_dir:
+                continue
+            if not world.in_bounds(nx, ny):
+                continue
+            if not world.get_tile(nx, ny).is_walkable:
+                continue
+            this_first = (ddx, ddy) if (x, y) == (sx, sy) else first_dir[(x, y)]
+            first_dir[(nx, ny)] = this_first
+            queue.append((nx, ny, depth + 1))
+    return None, None
 
 
 def step_toward(agent, target_x, target_y, world):
@@ -184,17 +230,25 @@ def forage(agent, world, *, rng):
             },
         }
 
-    target = world.find_nearest_tile(
-        agent.x, agent.y,
+    # BFS flood for the nearest REACHABLE food tile. Previously used
+    # find_nearest_tile (Manhattan, ignores walkability) + step_toward
+    # (BFS on that target), which failed two ways: unreachable targets
+    # dropped to random-walk, and nearer-target-depleted oscillated the
+    # chosen target between ticks. The flood resolves both: a single
+    # pass returns a reachable target with its first step.
+    step, target = _bfs_first_reachable(
+        agent, world,
         lambda t: t.resource_type == 'food' and t.resource_amount > 0,
     )
-    if target is None:
+    if step is None:
         return explore(agent, world, rng=rng)
 
-    moved = step_toward(agent, target.x, target.y, world)
-    if not moved:
-        # greedy step blocked (no pathfinding); random walk so agent at least moves
-        return explore(agent, world, rng=rng)
+    ddx, ddy = step
+    nx, ny = agent.x + ddx, agent.y + ddy
+    dest_tile = world.get_tile(nx, ny)
+    agent.x = nx
+    agent.y = ny
+    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
     agent.state = STATE_FORAGING
     return {
         'type': 'moved',
@@ -329,6 +383,7 @@ def plant(agent, world, colony):
     tile.crop_growth_ticks = 0
     tile.crop_colony_id = colony.id
     colony.growing_count += 1
+    agent.state = STATE_PLANTING
     return {
         'type': 'planted',
         'description': f'{agent.name} planted at ({tile.x},{tile.y})',
@@ -359,6 +414,7 @@ def harvest(agent, world, colony):
     tile.crop_growth_ticks = 0
     tile.crop_colony_id = None
     tile.resource_amount = 0
+    agent.state = STATE_HARVESTING
 
     return {
         'type': 'harvested',
@@ -392,6 +448,7 @@ def deposit_cargo(agent, colony):
     amount = cargo
     colony.food_stock += amount
     agent.cargo = 0.0
+    agent.state = STATE_DEPOSITING
     return {
         'type': 'deposited',
         'description': f'{agent.name} dropped off {amount:g} food',
@@ -399,6 +456,42 @@ def deposit_cargo(agent, colony):
             'agent_id': agent.id,
             'colony_id': colony.id,
             'amount': amount,
+        },
+    }
+
+
+def eat_cargo(agent):
+    """Rogue's larder: consume one pouch unit, bump hunger.
+
+    Rogue agents have no camp to deposit or eat at. Without this action
+    a rogue who forages to full cargo can't spend any of it on their
+    own hunger — the forage action double-feeds during gather, but once
+    the agent is away from food tiles the cargo just sits unused.
+
+    Pre-conditions:
+      * agent.cargo > 0
+      * agent.hunger < NEED_MAX
+
+    Consumes 1 unit. Hunger bumps by FORAGE_HUNGER_RESTORE — same as
+    the gather-time hunger restore so a cargo meal feels like a forage
+    meal. Caller (decide_action rogue branch) already gates on
+    HUNGER_MODERATE, so the strict-less-than guard here is defensive.
+    """
+    cargo = getattr(agent, 'cargo', 0.0)
+    if cargo <= 0:
+        return {'type': 'idled', 'description': f'{agent.name} had nothing in their pouch'}
+    if agent.hunger >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
+    taken = min(1.0, cargo)
+    agent.cargo = cargo - taken
+    agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
+    agent.state = STATE_EATING
+    return {
+        'type': 'ate_from_cargo',
+        'description': f'{agent.name} ate from their pouch',
+        'data': {
+            'agent_id': agent.id,
+            'amount': taken,
         },
     }
 
@@ -429,6 +522,7 @@ def eat_camp(agent, colony):
     agent.hunger = needs.NEED_MAX
     colony.food_stock -= config.EAT_COST
     agent.ate_this_dawn = True
+    agent.state = STATE_EATING
     return {
         'type': 'ate_from_cache',
         'description': f'{agent.name} ate at camp',

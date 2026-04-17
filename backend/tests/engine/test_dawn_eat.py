@@ -70,3 +70,11 @@ def test_eat_camp_refuses_second_meal_same_dawn():
     event = actions.eat_camp(a, c)
     assert event['type'] == 'idled'
     assert c.food_stock == config.INITIAL_FOOD_STOCK - config.EAT_COST   # only one debit
+
+
+def test_eat_camp_sets_agent_state_eating():
+    c = _colony_at_camp()
+    a = Agent('A', 1, 1, agent_id=1, colony_id=1)
+    a.hunger = 45.0
+    actions.eat_camp(a, c)
+    assert a.state == actions.STATE_EATING

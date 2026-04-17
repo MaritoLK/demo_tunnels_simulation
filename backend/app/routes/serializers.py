@@ -29,6 +29,7 @@ def agent_to_dict(agent):
         # legacy ORM-agent serializer calls (pre-slot) from NPE'ing.
         'rogue': getattr(agent, 'rogue', False),
         'loner': getattr(agent, 'loner', False),
+        'cargo': getattr(agent, 'cargo', 0.0),
     }
 
 

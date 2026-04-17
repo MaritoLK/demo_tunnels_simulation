@@ -33,11 +33,16 @@ type CtxSpy = {
   arc: ReturnType<typeof vi.fn>;
   ellipse: ReturnType<typeof vi.fn>;
   setLineDash: ReturnType<typeof vi.fn>;
+  strokeText: ReturnType<typeof vi.fn>;
+  fillText: ReturnType<typeof vi.fn>;
   fillStyle: string;
   strokeStyle: string;
   lineWidth: number;
   globalAlpha: number;
   imageSmoothingEnabled: boolean;
+  font: string;
+  textAlign: string;
+  textBaseline: string;
 };
 
 function makeCtxSpy(): CtxSpy {
@@ -56,11 +61,16 @@ function makeCtxSpy(): CtxSpy {
     arc: vi.fn(),
     ellipse: vi.fn(),
     setLineDash: vi.fn(),
+    strokeText: vi.fn(),
+    fillText: vi.fn(),
     fillStyle: '',
     strokeStyle: '',
     lineWidth: 0,
     globalAlpha: 1,
     imageSmoothingEnabled: false,
+    font: '',
+    textAlign: '',
+    textBaseline: '',
   };
 }
 
@@ -94,6 +104,7 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
     cameraX: 0,
     cameraY: 0,
     selectedAgentId: 7,
+    selectedTile: null,
     reducedMotion: false,
     currentTick: 0,
     ...overrides,

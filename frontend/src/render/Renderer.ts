@@ -29,6 +29,11 @@ export interface FrameSnapshot {
   cameraX: number;
   cameraY: number;
   selectedAgentId: number | null;
+  // Selected tile (mutually exclusive with selectedAgentId). The
+  // renderer draws a diamond outline on this tile — subtler than the
+  // agent selection ring so a selected tile doesn't shout over pawns
+  // standing on it.
+  selectedTile: { x: number; y: number } | null;
   // When true, the renderer must skip animated decoration (rotating
   // rings, pulsing halos, etc.) and draw a static equivalent. Sourced
   // from `prefers-reduced-motion: reduce` and threaded through the

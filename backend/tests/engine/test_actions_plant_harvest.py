@@ -33,6 +33,29 @@ def test_plant_converts_empty_tile_to_growing():
     }
 
 
+# ─── state labelling: renderer reads agent.state to paint the
+# action label over the pawn's head. Without setting state in each
+# productive action the label shows stale "exploring"/"traversing"
+# from whatever tick ran before the action fired.
+
+def test_plant_sets_agent_state_planting():
+    w = _grass_world()
+    a = Agent('A', 2, 2, agent_id=10, colony_id=1)
+    c = _fresh_colony()
+    actions.plant(a, w, c)
+    assert a.state == actions.STATE_PLANTING
+
+
+def test_harvest_sets_agent_state_harvesting():
+    w = _grass_world()
+    w.get_tile(2, 2).crop_state = 'mature'
+    w.get_tile(2, 2).crop_colony_id = 1
+    a = Agent('A', 2, 2, agent_id=10, colony_id=1)
+    c = _fresh_colony(growing=1)
+    actions.harvest(a, w, c)
+    assert a.state == actions.STATE_HARVESTING
+
+
 def test_plant_refuses_already_cultivated_tile():
     w = _grass_world()
     w.get_tile(2, 2).crop_state = 'growing'

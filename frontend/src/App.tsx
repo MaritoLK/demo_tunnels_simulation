@@ -9,6 +9,7 @@ import {
   useStepSimulation,
 } from './api/queries';
 import { AgentPanel } from './components/AgentPanel';
+import { TilePanel } from './components/TilePanel';
 import { ClockWidget } from './components/ClockWidget';
 import { ColonyPanel } from './components/ColonyPanel';
 import { EmptyState } from './components/EmptyState';
@@ -168,6 +169,7 @@ export function App() {
         <ColonyPanel colonies={colonies.data ?? []} />
 
         <AgentPanel />
+        <TilePanel />
 
         <EventLog />
       </aside>

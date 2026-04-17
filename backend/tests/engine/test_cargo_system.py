@@ -108,6 +108,14 @@ def test_deposit_moves_cargo_into_colony_stock():
     assert c.food_stock == 25
 
 
+def test_deposit_sets_agent_state_depositing():
+    c = _colony(food_stock=20)
+    a = Agent('A', 0, 0, agent_id=1, colony_id=1)
+    a.cargo = 5
+    actions.deposit_cargo(a, c)
+    assert a.state == actions.STATE_DEPOSITING
+
+
 def test_deposit_off_camp_returns_idled_no_mutation():
     c = _colony(cx=0, cy=0, food_stock=20)
     a = Agent('A', 3, 3, agent_id=1, colony_id=1)  # not at camp
@@ -143,7 +151,14 @@ def test_day_at_camp_with_cargo_returns_deposit():
     assert action_name == 'deposit'
 
 
-def test_day_full_pouch_off_camp_returns_step_to_camp():
+def test_day_full_cargo_non_rogue_returns_home_to_deposit():
+    """Non-rogue agents with a full pouch DO head home. The 'remove
+    forced returns' rework dropped all camp-seeking, but a full pouch
+    is a special signal: the agent literally can't gather more until
+    they offload. Letting them wander the field with CARRY_MAX cargo
+    wasted whole days of productivity. Rogues are still exempt — no
+    home to go to — and get routed through eat_cargo / explore instead.
+    """
     c = _colony(cx=0, cy=0)
     w = _grass_world(6, 6)
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)  # off camp
@@ -154,3 +169,36 @@ def test_day_full_pouch_off_camp_returns_step_to_camp():
     a.health = 90
     action_name = decide_action(a, world=w, colony=c, phase='day')
     assert action_name == 'step_to_camp'
+
+
+def test_day_full_cargo_rogue_does_not_force_return():
+    """Rogue has no home. A full pouch routes them to eat_cargo when
+    hungry or explore otherwise — never step_to_camp."""
+    c = _colony(cx=0, cy=0)
+    w = _grass_world(6, 6)
+    a = Agent('A', 4, 4, agent_id=1, colony_id=1)
+    a.rogue = True
+    a.cargo = needs.CARRY_MAX
+    a.hunger = 90
+    a.energy = 90
+    a.social = 90
+    a.health = 90
+    action_name = decide_action(a, world=w, colony=c, phase='day')
+    assert action_name != 'step_to_camp'
+
+
+def test_day_partial_cargo_off_camp_does_not_force_return():
+    """Only FULL cargo forces a return. A half-full pouch keeps the
+    agent productive — otherwise every couple of forages they'd stop
+    working and trudge home, same flat-demo failure mode as before."""
+    c = _colony(cx=0, cy=0)
+    w = _grass_world(6, 6)
+    a = Agent('A', 4, 4, agent_id=1, colony_id=1)
+    a.cargo = needs.CARRY_MAX // 2
+    a.hunger = 90
+    a.energy = 90
+    a.social = 90
+    a.health = 90
+    action_name = decide_action(a, world=w, colony=c, phase='day')
+    assert action_name != 'step_to_camp'
+    assert action_name == 'plant'

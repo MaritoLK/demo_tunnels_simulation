@@ -7,6 +7,10 @@ services:
     environment:
       DATABASE_URL: postgresql://tunnels:${DB_PASSWORD:-tunnels_dev}@db:5432/tunnels
       FLASK_ENV: development
+      # FLASK_DEBUG enables the reloader + debugger. FLASK_ENV alone is
+      # deprecated (Flask ≥2.2) and does NOT turn on the reloader — we
+      # hit this live during demo prep when .py edits didn't propagate.
+      FLASK_DEBUG: 1
     volumes:
       - ./backend:/app
     depends_on:

@@ -11,6 +11,11 @@
 import { useAgents } from '../api/queries';
 import { useViewStore } from '../state/viewStore';
 
+// Mirrors backend needs.CARRY_MAX. Duplicated at the wire boundary
+// (same pattern as FORAGE_SERVING in the renderer) — small scalar,
+// not worth a /config round-trip.
+const CARRY_MAX = 8;
+
 export function AgentPanel() {
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);
   const selectAgent = useViewStore((s) => s.selectAgent);
@@ -72,8 +77,32 @@ export function AgentPanel() {
         <Meter label="hunger" value={agent.hunger} hue={needHue(agent.hunger)} />
         <Meter label="energy" value={agent.energy} hue={needHue(agent.energy)} />
         <Meter label="social" value={agent.social} hue={needHue(agent.social)} />
+        <CargoMeter cargo={agent.cargo ?? 0} />
       </div>
     </section>
+  );
+}
+
+// Pouch fullness. Scale is 0..CARRY_MAX (not 0..100 like needs), so
+// render fill as a percentage and show the raw `cargo/CARRY_MAX`
+// readout. Warm hue mirrors the food sprite's coral; a full pouch
+// should read as "go deposit" not "danger".
+function CargoMeter({ cargo }: { cargo: number }) {
+  const clamped = Math.max(0, Math.min(CARRY_MAX, cargo));
+  const pct = (clamped / CARRY_MAX) * 100;
+  return (
+    <div className="meter">
+      <div className="meter__row">
+        <span className="meter__label">cargo</span>
+        <span className="meter__value">{clamped.toFixed(1)} / {CARRY_MAX}</span>
+      </div>
+      <div className="meter__track">
+        <div
+          className="meter__fill"
+          style={{ width: `${pct}%`, background: '#ff7b3b' }}
+        />
+      </div>
+    </div>
   );
 }
 

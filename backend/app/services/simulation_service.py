@@ -215,7 +215,7 @@ def step_simulation(ticks=1):
       * updated WorldTile rows — tiles dirtied by foraged/planted/harvested/
         crop_matured events (resource_amount, crop_state, crop_growth_ticks,
         crop_colony_id)
-      * updated Colony rows — food_stock deltas from harvested/ate_from_cache
+      * updated Colony rows — food_stock deltas from harvested/ate_from_cache/deposited
       * updated Agent rows — alive agents mutate each tick
       * SimulationState — current_tick + RNG sub-stream snapshots
     """
@@ -243,7 +243,7 @@ def step_simulation(ticks=1):
         dirty_colony_ids = {
             e['data']['colony_id']
             for e in events
-            if e['type'] in ('harvested', 'ate_from_cache')
+            if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
         }
         if dirty_colony_ids:
             _update_dirty_colonies(sim, dirty_colony_ids)
@@ -371,7 +371,7 @@ def _update_dirty_tiles(sim, coords):
 
 
 def _update_dirty_colonies(sim, colony_ids):
-    """Write food_stock deltas from harvested/ate_from_cache events back to DB.
+    """Write food_stock deltas from harvested/ate_from_cache/deposited events back to DB.
 
     Unlike `_update_agents` (agents die mid-tick, id-miss is legitimate),
     a colony that emitted an event *must* exist in `sim.colonies` — no

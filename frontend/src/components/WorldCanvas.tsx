@@ -81,10 +81,12 @@ export function WorldCanvas() {
   const cameraX = useViewStore((s) => s.cameraX);
   const cameraY = useViewStore((s) => s.cameraY);
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);
+  const selectedTile = useViewStore((s) => s.selectedTile);
   const pan = useViewStore((s) => s.pan);
   const setCamera = useViewStore((s) => s.setCamera);
   const setZoom = useViewStore((s) => s.setZoom);
   const selectAgent = useViewStore((s) => s.selectAgent);
+  const selectTile = useViewStore((s) => s.selectTile);
 
   const tilePx = BASE_TILE_PX * zoom;
 
@@ -104,13 +106,14 @@ export function WorldCanvas() {
       cameraX,
       cameraY,
       selectedAgentId,
+      selectedTile,
       // Re-read per snapshot update rather than once at mount —
       // the OS preference can toggle while the app is running, and
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
       currentTick: sim.data?.tick ?? 0,
     };
-  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, sim.data?.tick]);
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {
@@ -236,7 +239,19 @@ export function WorldCanvas() {
         const worldX = (localX - snap.cameraX) / snap.tilePx;
         const worldY = (localY - snap.cameraY) / snap.tilePx;
         const hit = pickAgent(snap.agents, worldX, worldY);
-        selectAgent(hit?.id ?? null);
+        if (hit) {
+          selectAgent(hit.id);
+          return;
+        }
+        // Fallback: pick the tile under the cursor if it has something
+        // worth inspecting (crop or food). Click on bare grass clears
+        // any prior selection — empty click = deselect, same as agents.
+        const tile = pickInspectableTile(snap, worldX, worldY);
+        if (tile) {
+          selectTile({ x: tile.x, y: tile.y });
+        } else {
+          selectAgent(null);
+        }
       }
     };
 
@@ -273,6 +288,7 @@ export function WorldCanvas() {
     canvas.addEventListener('lostpointercapture', onLostCapture);
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
+    // selectTile is referenced inside onPointerUp; keep deps tracked.
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       canvas.removeEventListener('pointerdown', onPointerDown);
@@ -284,7 +300,7 @@ export function WorldCanvas() {
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
-  }, [pan, setCamera, setZoom, selectAgent]);
+  }, [pan, setCamera, setZoom, selectAgent, selectTile]);
 
   const status = useMemo(() => {
     if (world.isLoading || agents.isLoading) return 'loading world…';
@@ -320,4 +336,26 @@ function pickAgent(
     }
   }
   return null;
+}
+
+// Tile picker for the inspector fallback: only tiles with a crop or a
+// food resource are selectable. Plain grass/sand/stone tiles are not —
+// clicking bare ground should deselect, not open an empty panel.
+function pickInspectableTile(
+  snap: FrameSnapshot,
+  worldX: number,
+  worldY: number,
+) {
+  if (worldX < 0 || worldY < 0) return null;
+  const tx = Math.floor(worldX);
+  const ty = Math.floor(worldY);
+  if (tx >= snap.width || ty >= snap.height) return null;
+  const row = snap.tiles[ty];
+  if (!row) return null;
+  const tile = row[tx];
+  if (!tile) return null;
+  const hasCrop = tile.crop_state !== 'none';
+  const hasFood = tile.resource_type === 'food' && tile.resource_amount > 0;
+  if (!hasCrop && !hasFood) return null;
+  return tile;
 }
