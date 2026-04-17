@@ -11,7 +11,6 @@ Responsibilities kept here (and nowhere else):
 """
 import logging
 import os
-import traceback
 
 from flask import Flask
 from flask_cors import CORS
@@ -104,8 +103,7 @@ def _register_error_handlers(app):
     def _internal(e):
         # Catch-all so the default Werkzeug traceback never leaks into
         # the response body. Traceback still goes to server logs.
-        logger.error("unhandled exception", exc_info=e)
-        traceback.print_exc()
+        logger.exception("unhandled exception")
         return {"error": "internal server error"}, 500
 
 
