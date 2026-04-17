@@ -247,8 +247,10 @@ function getSimStatus(sim: { isLoading: boolean; error: unknown; data: unknown }
   return 'ok';
 }
 
+const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
+
 function fmtNum(n: number): string {
-  return new Intl.NumberFormat('en-US').format(n);
+  return NUMBER_FORMATTER.format(n);
 }
 
 function LabeledNumber({

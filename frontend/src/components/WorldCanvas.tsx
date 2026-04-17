@@ -314,7 +314,12 @@ export function WorldCanvas() {
 
   return (
     <div className="world-canvas">
-      <div ref={hostRef} className="world-canvas__host" />
+      <div
+        ref={hostRef}
+        className="world-canvas__host"
+        role="img"
+        aria-label="Colony simulation map — pan with drag, zoom with wheel, click to select an agent or tile"
+      />
       {status && <div className="overlay">{status}</div>}
     </div>
   );
