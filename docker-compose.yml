@@ -1,21 +1,52 @@
 services:
 
-  flask:
+  migrate:
+    # One-shot: runs `flask db upgrade`, exits 0, blocks `flask` from
+    # starting until schema is current. Without this, a fresh pgdata
+    # volume boots empty and the first ORM query throws UndefinedTable.
+    # DISABLE_TICK_LOOP keeps create_app() from kicking off the background
+    # ticker during `flask db upgrade` (which would query tables that
+    # don't exist yet and spit a traceback before alembic gets to run).
     build: ./backend
-    ports:
-      - "5000:5000"
     environment:
       DATABASE_URL: postgresql://tunnels:${DB_PASSWORD:-tunnels_dev}@db:5432/tunnels
-      FLASK_ENV: development
-      # FLASK_DEBUG enables the reloader + debugger. FLASK_ENV alone is
-      # deprecated (Flask ≥2.2) and does NOT turn on the reloader — we
-      # hit this live during demo prep when .py edits didn't propagate.
+      DISABLE_TICK_LOOP: 1
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: flask db upgrade
+    restart: "no"
+
+  flask:
+    build: ./backend
+    # Bind to loopback only — the host can still hit it for debugging,
+    # but the port is not exposed on the LAN. Browser traffic goes
+    # through nginx on :80. Dropping this mapping entirely is cleaner
+    # in prod; kept for dev so `curl localhost:5000/api/health` works.
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      DATABASE_URL: postgresql://tunnels:${DB_PASSWORD:-tunnels_dev}@db:5432/tunnels
+      # FLASK_DEBUG=1 turns on the reloader + debugger. We previously also set
+      # FLASK_ENV=development but it's deprecated since Flask 2.2 and does
+      # NOT enable the reloader on its own — dropped to avoid the false sense
+      # of safety we hit during demo prep when .py edits didn't propagate.
       FLASK_DEBUG: 1
     volumes:
       - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     # Auto-restart on crash so a single unhandled exception during the
     # live demo doesn't end the session. `unless-stopped` (not `always`)
     # respects a deliberate `docker compose stop` between runs.
@@ -23,36 +54,46 @@ services:
   react:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     restart: unless-stopped
 
-  nginx:          
-    image: nginx:alpine                                                                                                                            
-    ports:                                                                                                                                         
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
       - "80:80"
-    volumes:                                                                                                                                       
+    volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
-      - flask
-      - react
+      flask:
+        condition: service_healthy
+      react:
+        condition: service_started
+    restart: unless-stopped
   
   db:
-    image: postgres:18
+    image: postgres:18.0-alpine
     environment:
       POSTGRES_DB: tunnels
       POSTGRES_USER: tunnels
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-tunnels_dev}  
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tunnels_dev}
+    restart: unless-stopped
     volumes:
+      # postgres:18+ stores data under a major-version subdir
+      # (/var/lib/postgresql/<major>/docker) and explicitly recommends
+      # mounting the volume at the parent so pg_upgrade --link works
+      # across major bumps. Do NOT change this to /var/lib/postgresql/data
+      # — the image refuses to start, calling that dir an "unused mount".
+      # Refs: github.com/docker-library/postgres/pull/1259, issue/37.
       - pgdata:/var/lib/postgresql
-    healthcheck:                                                                                                                                     
-      test: ["CMD-SHELL", "pg_isready -U tunnels"]                                                                                                   
-      interval: 5s                                
-      timeout: 3s 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tunnels"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
-volumes:                                              
+volumes:
   pgdata:
   
