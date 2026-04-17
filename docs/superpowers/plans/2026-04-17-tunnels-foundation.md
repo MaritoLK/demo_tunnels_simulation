@@ -1,5 +1,7 @@
 # Tunnels — Foundation (Sub-project A) Implementation Plan
 
+**Baseline:** After pre-flight shipped `c45548c`, the green baseline is 215 backend + 37 frontend. Task N Step 6 counts are absolute, not deltas from the plan's original 213.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the vertical Foundation slice for the Tunnels dynastic-civ MVP: scaffolding (new models, `/api/v1/game/*` Flask blueprint, React Router, Zustand), new-game bootstrap with a 5-member starter council, recruitment scene that fills an empty council slot, event-attribution + quarterly digest at week 4. Existing colony sim + its 213 backend tests + 37 frontend tests remain green throughout.
@@ -107,7 +109,7 @@ npm test                                                 # vitest (expect ≥37 
 Full-stack manual check:
 ```bash
 docker compose up -d                                     # bring everything up
-curl -s http://localhost/api/v1/game/state | jq .        # should 200 with empty state
+curl -s http://localhost/api/v1/game/state | jq .        # should 204 No Content with no game
 ```
 
 ---
@@ -167,7 +169,7 @@ def test_event_log_append_only(client):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-docker compose run --rm flask pytest backend/tests/models/test_game_models.py -v
+docker compose run --rm flask pytest tests/models/test_game_models.py -v
 ```
 Expected: FAIL with `ImportError: cannot import name 'GameStateRow' from 'app.models.game_state_row'`
 
@@ -183,7 +185,7 @@ class GameStateRow(db.Model):
     id = db.Column(db.Integer, primary_key=True)  # enforced singleton via CHECK
     tick = db.Column(db.Integer, nullable=False, default=0)
     year = db.Column(db.Integer, nullable=False, default=0)
-    active_layer = db.Column(db.String(16), nullable=False, default='court')
+    active_layer = db.Column(db.String(16), nullable=False, default='life_sim')
     alignment_axes_json = db.Column(JSONB, nullable=False, default=dict)
     __table_args__ = (
         db.CheckConstraint('id = 1', name='game_state_singleton'),
@@ -297,16 +299,16 @@ Rename the generated file to `backend/migrations/versions/f7e8d9a0b1c2_game_foun
 
 ```bash
 docker compose run --rm flask flask db upgrade
-docker compose run --rm flask pytest backend/tests/models/test_game_models.py -v
+docker compose run --rm flask pytest tests/models/test_game_models.py -v
 ```
-Expected: 3 passing
+Expected: 7 passing
 
 - [ ] **Step 6: Run full backend suite — must stay green**
 
 ```bash
 docker compose run --rm flask pytest -q
 ```
-Expected: all prior 213 passing + 3 new = 216 passing
+Expected: all prior 215 passing + 7 new = 222 passing
 
 - [ ] **Step 7: Commit**
 
