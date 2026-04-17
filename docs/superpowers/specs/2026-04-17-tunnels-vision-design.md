@@ -285,6 +285,7 @@ One external playtester completes a full generation (hero creation → capital s
 - Non-SQLite persistence
 - Migration tooling beyond the existing Alembic pattern
 - Cloud saves, telemetry
+- Authentication on control endpoints — consciously deferred. Secure-by-topology today (loopback + nginx). Trigger to revisit: first time the Flask port is exposed beyond localhost; endpoints become anonymous-writable the moment that changes.
 
 ---
 

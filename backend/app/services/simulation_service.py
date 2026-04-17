@@ -24,6 +24,8 @@ from . import mappers
 from .exceptions import SimulationNotFoundError
 
 
+# Single-process assumption. Drift possible if migrate + flask containers run
+# simultaneously (compose restart race). Re-evaluate for multi-worker.
 _current_sim = None
 
 # One request cannot hold a transaction open for a million ticks. Cap the

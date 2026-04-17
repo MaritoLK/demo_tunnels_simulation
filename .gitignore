@@ -23,6 +23,7 @@ docs/*
 !docs/superpowers/
 docs/superpowers/*
 !docs/superpowers/specs/
+!docs/superpowers/plans/
 
 INTERVIEW_DEFENSE.md
 
