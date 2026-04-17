@@ -23,7 +23,7 @@ STARVATION_HEALTH_DAMAGE = 2.0
 # damage branch: decay_needs is the one place health changes each tick.
 PASSIVE_HEAL_RATE = 0.3
 
-FORAGE_HUNGER_RESTORE = 30.0
+FORAGE_HUNGER_RESTORE = 20.0
 REST_ENERGY_RESTORE = 5.0
 # Rest action heal bonus: resting while well-fed recovers health faster
 # than the passive drip. Gives the rest branch a second purpose beyond
@@ -31,7 +31,16 @@ REST_ENERGY_RESTORE = 5.0
 REST_HEAL_BONUS = 1.5
 SOCIALISE_SOCIAL_RESTORE = 20.0
 
-FORAGE_TILE_DEPLETION = 5.0
+# One forage action consumes this many tile units. Paired with the
+# 2–10 random food amounts per tile (see World._roll_resource), tiles
+# now visibly decay across 1–5 serving badges in the UI as agents eat.
+FORAGE_TILE_DEPLETION = 2.0
+
+# Foragers keep surplus food in a pouch up to this cap. Once full, the
+# forage guard idles — the agent has to head back to camp and deposit
+# into colony.food_stock before they can pick up more. Creates a visible
+# gather → carry → return loop that feeds the shared stockpile.
+CARRY_MAX = 8.0
 
 HEALTH_CRITICAL = 20.0
 HUNGER_CRITICAL = 20.0

@@ -17,7 +17,7 @@ from sqlalchemy import tuple_
 
 from app import db, models
 from app.engine.simulation import Simulation, new_simulation
-from app.engine import config as engine_config
+from app.engine import config as engine_config, cycle
 from app.engine.colony import EngineColony
 
 from . import mappers
@@ -171,6 +171,14 @@ def create_simulation(width, height, seed=None, agent_count=0,
                 width, height, seed=seed,
                 agent_count=agent_count,
             )
+
+        # Demo bootstrap: skip the opening dawn window so press-play starts
+        # in the 'day' phase. Without this, a fresh sim spends the first
+        # TICKS_PER_PHASE ticks on eat/rest/step-to-camp routines — visually
+        # sleepy for an interview demo. Engine tests that construct their
+        # own Simulation directly are untouched (this offset lives at the
+        # service seam, not in engine.simulation).
+        sim.current_tick = cycle.TICKS_PER_PHASE
 
         tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
         db.session.add_all(tile_rows)

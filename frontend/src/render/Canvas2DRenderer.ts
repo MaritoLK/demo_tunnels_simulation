@@ -63,6 +63,12 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
   stone: '#d0d0d8', // light stone
 };
 
+// Units of food consumed per forage action. Mirrors backend
+// needs.FORAGE_TILE_DEPLETION. Small magic number duplicated across the
+// wire boundary rather than added to every /world/state payload — it
+// only drives a cosmetic serving badge.
+const FORAGE_SERVING = 2;
+
 export class Canvas2DRenderer implements Renderer {
   private host: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -229,6 +235,14 @@ export class Canvas2DRenderer implements Renderer {
               0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
               px + meatOffset, py + meatOffset, meatSize, meatSize,
             );
+            // Serving count badge — one meat sprite can hold several
+            // forage actions' worth of food. Without this, the sprite
+            // looks identical after each forage until it vanishes on
+            // the last serving. Only show ≥2 servings; "×1" is noise.
+            const servings = Math.ceil(tile.resource_amount / FORAGE_SERVING);
+            if (servings >= 2 && tilePx >= 14) {
+              drawFoodBadge(ctx, servings, px, py, tilePx);
+            }
           }
           // Wood/stone: no overlay. The bush/rock decoration sprite
           // already communicates the resource; a dot on top produces
@@ -650,4 +664,29 @@ function drawResourceDot(
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = Math.max(1, tilePx * 0.06);
   ctx.stroke();
+}
+
+// "×N" badge in the bottom-right of the food tile, so the player can
+// see the stack shrink forage-by-forage rather than wait for the whole
+// sprite to disappear on the last serving.
+function drawFoodBadge(
+  ctx: CanvasRenderingContext2D,
+  servings: number,
+  px: number,
+  py: number,
+  tilePx: number,
+): void {
+  const label = `×${servings}`;
+  const fontPx = Math.max(9, Math.floor(tilePx * 0.32));
+  ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  const tx = px + tilePx - Math.max(2, tilePx * 0.08);
+  const ty = py + tilePx - Math.max(2, tilePx * 0.06);
+  // Outline first so the digits read against any terrain tint.
+  ctx.lineWidth = Math.max(2, Math.floor(tilePx * 0.1));
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(label, tx, ty);
+  ctx.fillStyle = '#ffe9c4';
+  ctx.fillText(label, tx, ty);
 }

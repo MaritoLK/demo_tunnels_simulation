@@ -10,6 +10,7 @@ class Agent:
         'colony_id', 'ate_this_dawn',
         'move_cooldown',
         'rogue', 'loner',
+        'cargo',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -43,6 +44,11 @@ class Agent:
         # happen inside a short demo window. All other needs behave
         # normally.
         self.loner = False
+        # Units of food currently in the agent's pouch. 0..CARRY_MAX.
+        # Bumped by forage, drained by deposit_cargo at camp. Does NOT
+        # feed the agent's own hunger — that's the foraging side-effect
+        # that already fills hunger during the gather action.
+        self.cargo = 0.0
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
@@ -114,6 +120,19 @@ def decide_action(agent, world=None, colony=None, phase=None):
 
     # phase == 'day' OR rogue falling through dusk/dawn
     #
+    # Carry loop (non-rogue only — rogues have no camp to return to):
+    # a pouch-full agent hauls back to camp, and an at-camp agent with
+    # anything in the pouch drops it off before doing anything else.
+    # Placed above the social-return branch so a heavy load still
+    # triggers the trip home even if social is comfortable.
+    cargo = getattr(agent, 'cargo', 0.0)
+    if not rogue:
+        at_camp = colony.is_at_camp(agent.x, agent.y)
+        if at_camp and cargo > 0:
+            return 'deposit'
+        if cargo >= needs.CARRY_MAX and not at_camp:
+            return 'step_to_camp'
+
     # Social pressure: a non-rogue agent whose social dropped below
     # SOCIAL_LOW interrupts productive work to head home. Only camp
     # refills social (socialise() gates on camp tile), so this is the
@@ -172,6 +191,8 @@ def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
         return actions.harvest(agent, world, colony)
     if action_name == 'eat_camp':
         return actions.eat_camp(agent, colony)
+    if action_name == 'deposit':
+        return actions.deposit_cargo(agent, colony)
     if action_name == 'step_to_camp':
         moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world)
         return {

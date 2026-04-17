@@ -3,8 +3,14 @@ import json
 
 import pytest
 
+from app.engine.cycle import TICKS_PER_PHASE
+
 
 API = '/api/v1'
+
+# Fresh sims created via the service layer start at this tick so the demo
+# opens in 'day' phase rather than 'dawn' (see simulation_service).
+FRESH_TICK = TICKS_PER_PHASE
 
 
 def _put(client, body):
@@ -35,7 +41,7 @@ def test_put_simulation_returns_summary(client):
     resp = _put(client, {'width': 6, 'height': 6, 'seed': 11, 'agent_count': 2})
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body['tick'] == 0
+    assert body['tick'] == FRESH_TICK
     assert body['width'] == 6 and body['height'] == 6
     assert body['seed'] == 11
     assert body['agent_count'] == 2
@@ -45,7 +51,7 @@ def test_get_simulation_after_put(client):
     _put(client, {'width': 5, 'height': 5, 'agent_count': 1})
     resp = client.get(f'{API}/simulation')
     assert resp.status_code == 200
-    assert resp.get_json()['tick'] == 0
+    assert resp.get_json()['tick'] == FRESH_TICK
 
 
 def test_get_simulation_cold_returns_404(client):
@@ -59,7 +65,7 @@ def test_post_step_advances_tick_and_returns_events(client):
     resp = _post_step(client, {'ticks': 5})
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body['tick'] == 5
+    assert body['tick'] == FRESH_TICK + 5
     assert 'events' in body
 
 
@@ -98,27 +104,29 @@ def test_get_events_since_tick_exclusive(client):
         assert e['tick'] > 5
 
 
-def test_get_events_since_tick_minus_one_includes_tick_zero(client):
-    # B1 fix: `since_tick` is exclusive (`tick > N`), and tick numbering
-    # starts at 0 — events from the very first engine step are tagged
-    # tick=0. A client that passes since_tick=0 to "get everything new"
-    # would drop those tick-0 events. Convention: pass since_tick=-1 to
-    # mean "everything from tick 0 onward." The route must accept -1.
+def test_get_events_since_tick_minus_one_includes_first_tick(client):
+    # B1 fix: `since_tick` is exclusive (`tick > N`). A fresh sim now
+    # starts at FRESH_TICK (post-dawn skip), so the first persisted
+    # events land at FRESH_TICK. Convention: pass since_tick=-1 to mean
+    # "everything from the beginning onward." The route must accept -1,
+    # and the earliest event must be reachable through it.
     _put(client, {'width': 5, 'height': 5, 'seed': 1, 'agent_count': 2})
     _post_step(client, {'ticks': 1})
     resp = client.get(f'{API}/events?since_tick=-1&limit=1000')
     assert resp.status_code == 200
     events = resp.get_json()['events']
-    assert any(e['tick'] == 0 for e in events), 'tick-0 events must be reachable via since_tick=-1'
+    assert any(e['tick'] == FRESH_TICK for e in events), (
+        'first-tick events must be reachable via since_tick=-1'
+    )
 
 
-def test_get_world_state_since_tick_minus_one_includes_tick_zero(client):
+def test_get_world_state_since_tick_minus_one_includes_first_tick(client):
     # Same invariant for the composite polling endpoint.
     _put(client, {'width': 5, 'height': 5, 'seed': 1, 'agent_count': 2})
     _post_step(client, {'ticks': 1})
     resp = client.get(f'{API}/world/state?since_tick=-1')
     events = resp.get_json()['events']
-    assert any(e['tick'] == 0 for e in events)
+    assert any(e['tick'] == FRESH_TICK for e in events)
 
 
 # --- /world/state composite endpoint -------------------------------------
@@ -303,7 +311,8 @@ def test_world_state_includes_sim_day_and_phase(client, db_session):
     body = resp.get_json()
     assert 'day' in body['sim']
     assert 'phase' in body['sim']
-    assert body['sim']['phase'] == 'dawn'
+    # Fresh sim skips the opening dawn window — starts in 'day' at tick 30.
+    assert body['sim']['phase'] == 'day'
     assert body['sim']['day'] == 0
 
 
