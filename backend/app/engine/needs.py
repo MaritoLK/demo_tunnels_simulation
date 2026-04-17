@@ -8,6 +8,13 @@ SOCIAL_DECAY = 0.1
 # remains the single home for all decay-related tuning.
 NIGHT_HUNGER_SCALE = 0.5
 
+# Loner: promoted at spawn (see simulation.new_simulation). Their social
+# need decays at this multiple of SOCIAL_DECAY, so rogue transitions
+# happen inside a short demo window. Tuned so a loner reaches
+# SOCIAL_LOW (30) in ~60 default-speed ticks and rogue (0) in ~250 —
+# both comfortably within a 5-minute demo at 1×.
+LONER_SOCIAL_DECAY_MULT = 4.0
+
 STARVATION_HEALTH_DAMAGE = 2.0
 
 # Passive health regen: a well-fed agent slowly recovers. Without this,
@@ -38,7 +45,15 @@ NEED_MAX = 100.0
 def decay_needs(agent, hunger_scale=1.0):
     agent.hunger = max(0.0, agent.hunger - HUNGER_DECAY * hunger_scale)
     agent.energy = max(0.0, agent.energy - ENERGY_DECAY)
-    agent.social = max(0.0, agent.social - SOCIAL_DECAY)
+    social_mult = LONER_SOCIAL_DECAY_MULT if getattr(agent, 'loner', False) else 1.0
+    agent.social = max(0.0, agent.social - SOCIAL_DECAY * social_mult)
+    # Rogue flip: social collapsed to zero. One-way — even if the agent
+    # later refills social (e.g. the user buffs it via a debug path), the
+    # flag stays set. Models "you left the tribe too long, there's no
+    # coming back." Gated by `getattr` so legacy callers with bare Agent
+    # stand-ins (pre-slot) don't NPE; production Agent always has it.
+    if agent.social <= 0.0 and not getattr(agent, 'rogue', False):
+        agent.rogue = True
     if agent.hunger <= 0.0:
         agent.health = max(0.0, agent.health - STARVATION_HEALTH_DAMAGE)
     elif agent.hunger > HUNGER_MODERATE:

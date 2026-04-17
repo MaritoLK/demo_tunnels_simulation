@@ -8,6 +8,8 @@ class Agent:
         'hunger', 'energy', 'social', 'health',
         'age', 'alive',
         'colony_id', 'ate_this_dawn',
+        'move_cooldown',
+        'rogue', 'loner',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -27,6 +29,20 @@ class Agent:
         # cleared by tick_agent when phase != 'dawn'. Keeps one-meal-per-day
         # enforced without persisting a per-agent counter.
         self.ate_this_dawn = False
+        # Ticks remaining traversing the current tile. Set by step_toward /
+        # explore after a successful step = TERRAIN_MOVE_COST[dest] - 1.
+        # While > 0, tick_agent decrements and skips decide_action.
+        self.move_cooldown = 0
+        # Rogue: social need collapsed to 0 at least once. One-way flag
+        # flipped in decay_needs. Rogue agents never seek camp — they
+        # wander, forage, and rest wherever they are. No redemption arc.
+        self.rogue = False
+        # Loner: demo-only promotion flipped at spawn for ~2 agents per
+        # sim when population > 4. Scales social decay by
+        # LONER_SOCIAL_DECAY_MULT so a visible rogue transition can
+        # happen inside a short demo window. All other needs behave
+        # normally.
+        self.loner = False
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
@@ -65,21 +81,48 @@ def decide_action(agent, world=None, colony=None, phase=None):
     if agent.energy < needs.ENERGY_CRITICAL:
         return 'rest'
 
+    rogue = getattr(agent, 'rogue', False)
+
     if phase == 'night':
-        return 'rest'
+        # Non-rogue at camp → full rest. Otherwise rest in the open
+        # (worse recovery, but no forced death march back to camp at
+        # night when the agent is already tired). Rogue agents ignore
+        # camp entirely — home is not theirs anymore.
+        if not rogue and colony.is_at_camp(agent.x, agent.y):
+            return 'rest'
+        return 'rest_outdoors'
     if phase == 'dusk':
-        return 'step_to_camp'
+        if rogue:
+            # Rogue dusk → productive fallthrough (drop into day chain).
+            pass
+        else:
+            return 'step_to_camp'
     if phase == 'dawn':
-        at_camp = colony.is_at_camp(agent.x, agent.y)
-        if at_camp:
-            if (agent.hunger < needs.NEED_MAX
-                    and colony.food_stock >= config.EAT_COST
-                    and not agent.ate_this_dawn):
-                return 'eat_camp'
-            return 'rest'   # home but ineligible → rest, not a sham step
+        if rogue:
+            # Rogue dawn → productive fallthrough. No eat_camp (can't
+            # access stock), no step_to_camp.
+            pass
+        else:
+            at_camp = colony.is_at_camp(agent.x, agent.y)
+            if at_camp:
+                if (agent.hunger < needs.NEED_MAX
+                        and colony.food_stock >= config.EAT_COST
+                        and not agent.ate_this_dawn):
+                    return 'eat_camp'
+                return 'rest'   # home but ineligible → rest, not a sham step
+            return 'step_to_camp'
+
+    # phase == 'day' OR rogue falling through dusk/dawn
+    #
+    # Social pressure: a non-rogue agent whose social dropped below
+    # SOCIAL_LOW interrupts productive work to head home. Only camp
+    # refills social (socialise() gates on camp tile), so this is the
+    # only behaviour that can prevent social→0→rogue. Rogue agents
+    # skip this branch — their social will keep sliding but there's
+    # nothing to do about it.
+    if not rogue and agent.social < needs.SOCIAL_LOW:
         return 'step_to_camp'
 
-    # phase == 'day' — productive branches
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state == 'mature':
         return 'harvest'
@@ -88,7 +131,6 @@ def decide_action(agent, world=None, colony=None, phase=None):
             and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
         return 'plant'
 
-    # Existing hunger/social/explore fallthrough
     if agent.hunger < needs.HUNGER_MODERATE:
         return 'forage'
     if agent.social < needs.SOCIAL_LOW:
@@ -118,8 +160,10 @@ def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
         return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
         return actions.rest(agent)
+    if action_name == 'rest_outdoors':
+        return actions.rest_outdoors(agent)
     if action_name == 'socialise':
-        return actions.socialise(agent, all_agents)
+        return actions.socialise(agent, all_agents, colony=colony)
     if action_name == 'explore':
         return actions.explore(agent, world, rng=rng)
     if action_name == 'plant':
@@ -177,6 +221,19 @@ def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng
 
     if agent.health <= 0:
         events.append(actions.die(agent))
+        return events
+
+    # Terrain traversal cost: the agent is mid-crossing. Decay already ran
+    # (so sand/stone isn't a free hunger shelter), but the agent can't
+    # decide or act this tick. Age still advances — time passes regardless.
+    if agent.move_cooldown > 0:
+        agent.move_cooldown -= 1
+        agent.state = actions.STATE_TRAVERSING
+        events.append({
+            'type': 'idled',
+            'description': f'{agent.name} traversing terrain',
+        })
+        agent.age += 1
         return events
 
     # Invariant: when the new path is live, every agent belongs to a colony

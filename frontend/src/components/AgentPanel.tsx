@@ -42,6 +42,24 @@ export function AgentPanel() {
           <span className={`pill ${agent.alive ? 'pill--alive' : 'pill--dead'}`}>
             {agent.alive ? agent.state : 'deceased'}
           </span>
+          {agent.alive && agent.rogue && (
+            <span
+              className="pill"
+              style={{ marginLeft: 6, background: '#4a1a1a', color: '#ff8f6b' }}
+              title="Social need collapsed to zero — cannot return home"
+            >
+              rogue
+            </span>
+          )}
+          {agent.alive && agent.loner && !agent.rogue && (
+            <span
+              className="pill"
+              style={{ marginLeft: 6, background: '#1f2933', color: '#9fb4d0' }}
+              title="Social need decays faster than normal"
+            >
+              loner
+            </span>
+          )}
         </dd>
         <dt>position</dt>
         <dd>({agent.x}, {agent.y})</dd>

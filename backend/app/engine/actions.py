@@ -13,11 +13,23 @@ from . import needs
 
 DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
+# Ticks a successful step consumes, keyed by *destination* terrain.
+# Cost 1 = normal (no added wait); cost N sets agent.move_cooldown = N-1 so
+# the agent is blocked from acting for N-1 subsequent ticks.
+# Water is absent — is_walkable blocks entry entirely.
+TERRAIN_MOVE_COST = {
+    'grass': 1,
+    'forest': 2,
+    'sand': 2,
+    'stone': 3,
+}
+
 STATE_IDLE = 'idle'
 STATE_RESTING = 'resting'
 STATE_FORAGING = 'foraging'
 STATE_SOCIALISING = 'socialising'
 STATE_EXPLORING = 'exploring'
+STATE_TRAVERSING = 'traversing'
 STATE_DEAD = 'dead'
 
 
@@ -41,6 +53,8 @@ def step_toward(agent, target_x, target_y, world):
         if world.in_bounds(nx, ny) and world.get_tile(nx, ny).is_walkable:
             agent.x = nx
             agent.y = ny
+            dest_terrain = world.get_tile(nx, ny).terrain
+            agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
             return True
     return False
 
@@ -126,10 +140,47 @@ def rest(agent):
     }
 
 
-def socialise(agent, agents):
+def rest_outdoors(agent):
+    """Field rest — half the energy recovery of rest(), no heal bonus.
+
+    Used when night catches an agent away from camp, or when a rogue
+    agent can never return. Encodes "sleeping rough < sleeping home":
+    gives enough recovery that field work stays viable but home rest
+    remains strictly dominant, so camp-goers retain the advantage."""
+    agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE * 0.5)
+    agent.state = STATE_RESTING
+    return {
+        'type': 'rested_outdoors',
+        'description': f'{agent.name} rested in the open',
+    }
+
+
+def socialise(agent, agents, *, colony=None):
+    """Refill social only when BOTH participants are on the colony's camp tile.
+
+    Rationale (§day-night extension): socialising is a "home fire" ritual,
+    not a chance encounter in the field. Social need only tops up when an
+    agent returns to camp and finds a colony-mate there too. This forces
+    a return loop: long expeditions let social decay → agent must come
+    back → if too late, they go rogue.
+
+    `colony` defaults to None for legacy callers (pre-camp tests). In
+    that path we preserve the old unconditional refill so older tests
+    keep passing."""
     other = adjacent_agent(agent, agents)
     if other is None:
         return {'type': 'idled', 'description': f'{agent.name} found no one to socialise with'}
+
+    if colony is not None:
+        at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
+        if not at_camp:
+            # Neighbours met in the field — no social refill. Still emits
+            # an event so the tick log shows the encounter.
+            return {
+                'type': 'idled',
+                'description': f'{agent.name} passed {other.name} in the field',
+            }
+
     agent.social = min(needs.NEED_MAX, agent.social + needs.SOCIALISE_SOCIAL_RESTORE)
     other.social = min(needs.NEED_MAX, other.social + needs.SOCIALISE_SOCIAL_RESTORE)
     agent.state = STATE_SOCIALISING
@@ -149,6 +200,8 @@ def explore(agent, world, *, rng):
         agent.state = STATE_IDLE
         return {'type': 'idled', 'description': f'{agent.name} stayed in place'}
     agent.x, agent.y = rng.choice(options)
+    dest_terrain = world.get_tile(agent.x, agent.y).terrain
+    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
     agent.state = STATE_EXPLORING
     return {
         'type': 'moved',
