@@ -8,41 +8,114 @@ reproducibility contract (sub-seeded rng_spawn / rng_tick, see §9.11) is
 only useful if every caller threads rng through; enforcing it at the
 signature makes the contract impossible to bypass by accident.
 """
+from collections import deque
+
 from . import needs
 
 
 DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+# Ticks a successful step consumes, keyed by *destination* terrain.
+# Cost 1 = normal (no added wait); cost N sets agent.move_cooldown = N-1 so
+# the agent is blocked from acting for N-1 subsequent ticks.
+# Water is absent — is_walkable blocks entry entirely.
+TERRAIN_MOVE_COST = {
+    'grass': 1,
+    'forest': 2,
+    'sand': 2,
+    'stone': 3,
+}
 
 STATE_IDLE = 'idle'
 STATE_RESTING = 'resting'
 STATE_FORAGING = 'foraging'
 STATE_SOCIALISING = 'socialising'
 STATE_EXPLORING = 'exploring'
+STATE_TRAVERSING = 'traversing'
 STATE_DEAD = 'dead'
 
 
-def step_toward(agent, target_x, target_y, world):
-    dx = target_x - agent.x
-    dy = target_y - agent.y
-    candidates = []
-    if abs(dx) >= abs(dy):
-        if dx != 0:
-            candidates.append((1 if dx > 0 else -1, 0))
-        if dy != 0:
-            candidates.append((0, 1 if dy > 0 else -1))
-    else:
-        if dy != 0:
-            candidates.append((0, 1 if dy > 0 else -1))
-        if dx != 0:
-            candidates.append((1 if dx > 0 else -1, 0))
+# BFS search horizon. Tiles further than this (Manhattan-hop on walkable
+# tiles) won't be pathed to — the caller falls through to random walk.
+# 40 is ~2/3 the diagonal of the demo's 60x60 map: comfortably enough to
+# reach any visible target, and bounds per-tick CPU at ~1600 node visits
+# per agent in the worst case.
+PATH_SEARCH_HORIZON = 40
 
-    for ddx, ddy in candidates:
-        nx, ny = agent.x + ddx, agent.y + ddy
-        if world.in_bounds(nx, ny) and world.get_tile(nx, ny).is_walkable:
-            agent.x = nx
-            agent.y = ny
-            return True
-    return False
+
+def _first_step_bfs(agent, target_x, target_y, world):
+    """Return the (dx, dy) for the first step of a shortest walkable path
+    from the agent to (target_x, target_y), or None if unreachable within
+    PATH_SEARCH_HORIZON.
+
+    The target tile itself is accepted even if not walkable, so callers
+    can route toward e.g. a camp marker without coupling this function
+    to camp-tile semantics. Mid-path tiles must be walkable.
+    """
+    sx, sy = agent.x, agent.y
+    if (sx, sy) == (target_x, target_y):
+        return None
+
+    # first_dir[(x,y)] = the step taken FROM start to begin reaching
+    # (x,y). Reconstructing full paths isn't needed — we only ever act
+    # on the next step, so tracking the first direction per wavefront
+    # node is enough and avoids a second parent-chain walk.
+    first_dir = {(sx, sy): None}
+    queue = deque([(sx, sy, 0)])
+    while queue:
+        x, y, depth = queue.popleft()
+        if depth >= PATH_SEARCH_HORIZON:
+            continue
+        for ddx, ddy in DIRECTIONS:
+            nx, ny = x + ddx, y + ddy
+            if (nx, ny) in first_dir:
+                continue
+            if not world.in_bounds(nx, ny):
+                continue
+            is_target = (nx == target_x and ny == target_y)
+            if not is_target and not world.get_tile(nx, ny).is_walkable:
+                continue
+            # Root-level steps ARE the first direction; every further
+            # expansion inherits the ancestor's first direction.
+            this_first = (ddx, ddy) if (x, y) == (sx, sy) else first_dir[(x, y)]
+            if is_target:
+                return this_first
+            first_dir[(nx, ny)] = this_first
+            queue.append((nx, ny, depth + 1))
+    return None
+
+
+def step_toward(agent, target_x, target_y, world):
+    """Move one tile along a shortest walkable path toward the target.
+
+    Returns True if the agent moved, False if no path exists within
+    PATH_SEARCH_HORIZON (caller typically falls back to random walk).
+
+    Historical note: an earlier implementation picked greedily among
+    two candidate axes and quit if both were blocked. That produced
+    the shoreline-bounce bug where agents one step away from a food
+    tile across water would random-walk along the water's edge
+    forever, never actually reaching the food.
+    """
+    step = _first_step_bfs(agent, target_x, target_y, world)
+    if step is None:
+        return False
+    ddx, ddy = step
+    nx, ny = agent.x + ddx, agent.y + ddy
+    # Defensive: BFS should never return an out-of-bounds first step,
+    # but guard anyway so a bad map doesn't crash the tick loop.
+    if not world.in_bounds(nx, ny):
+        return False
+    dest_tile = world.get_tile(nx, ny)
+    # Allow stepping ONTO the target tile even if non-walkable; mid-path
+    # tiles are already filtered by the BFS.
+    is_target = (nx == target_x and ny == target_y)
+    if not dest_tile.is_walkable and not is_target:
+        return False
+    agent.x = nx
+    agent.y = ny
+    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+    return True
 
 
 def adjacent_food_tile(agent, world):
@@ -76,10 +149,27 @@ def adjacent_agent(agent, agents):
 
 
 def forage(agent, world, *, rng):
+    # Honest-action guard: idle only when BOTH hunger and pouch are
+    # full. A sated agent with empty cargo still forages (stockpiling
+    # for the colony), and a hungry agent with a full pouch still
+    # forages (the gather action feeds their own hunger regardless).
+    cargo = getattr(agent, 'cargo', 0.0)
+    if agent.hunger >= needs.NEED_MAX and cargo >= needs.CARRY_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
-        taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount)
+        # Taken from the tile is bounded by pouch room — an agent with
+        # nowhere to put surplus can't drain a tile for nothing. This
+        # is the food-scarcity invariant: tile units only leave the
+        # world through a pouch slot or a mouth.
+        pouch_room = needs.CARRY_MAX - cargo
+        taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount, pouch_room)
         tile.resource_amount -= taken
+        agent.cargo = cargo + taken
+        # Hunger fills regardless — the gather action doubles as eating
+        # on the spot. The FORAGE_HUNGER_RESTORE constant is independent
+        # of `taken` so a tile-starved forage still feeds the agent
+        # what little they found.
         agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
         agent.state = STATE_FORAGING
         return {
@@ -113,6 +203,11 @@ def forage(agent, world, *, rng):
 
 
 def rest(agent):
+    # Honest-action guard: dawn phase routes full-energy agents here.
+    # Without this, we emit a sham 'rested' event (and grant a heal bonus)
+    # for an agent that did nothing.
+    if agent.energy >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} was already full on energy'}
     agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE)
     # Rest while well-fed → extra health regen on top of the passive drip
     # in decay_needs. Strict-greater gate matches decay_needs so a single
@@ -126,10 +221,53 @@ def rest(agent):
     }
 
 
-def socialise(agent, agents):
+def rest_outdoors(agent):
+    """Field rest — half the energy recovery of rest(), no heal bonus.
+
+    Used when night catches an agent away from camp, or when a rogue
+    agent can never return. Encodes "sleeping rough < sleeping home":
+    gives enough recovery that field work stays viable but home rest
+    remains strictly dominant, so camp-goers retain the advantage."""
+    if agent.energy >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} was already full on energy'}
+    agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE * 0.5)
+    agent.state = STATE_RESTING
+    return {
+        'type': 'rested_outdoors',
+        'description': f'{agent.name} rested in the open',
+    }
+
+
+def socialise(agent, agents, *, colony=None):
+    """Refill social only when BOTH participants are on the colony's camp tile.
+
+    Rationale (§day-night extension): socialising is a "home fire" ritual,
+    not a chance encounter in the field. Social need only tops up when an
+    agent returns to camp and finds a colony-mate there too. This forces
+    a return loop: long expeditions let social decay → agent must come
+    back → if too late, they go rogue.
+
+    `colony` defaults to None for legacy callers (pre-camp tests). In
+    that path we preserve the old unconditional refill so older tests
+    keep passing."""
+    # Honest-action guard: full social → no-op. Emits before the partner
+    # lookup so we don't fire a sham 'passed in the field' event either.
+    if agent.social >= needs.NEED_MAX:
+        return {'type': 'idled', 'description': f'{agent.name} was already full on social'}
     other = adjacent_agent(agent, agents)
     if other is None:
         return {'type': 'idled', 'description': f'{agent.name} found no one to socialise with'}
+
+    if colony is not None:
+        at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
+        if not at_camp:
+            # Neighbours met in the field — no social refill. Still emits
+            # an event so the tick log shows the encounter.
+            return {
+                'type': 'idled',
+                'description': f'{agent.name} passed {other.name} in the field',
+            }
+
     agent.social = min(needs.NEED_MAX, agent.social + needs.SOCIALISE_SOCIAL_RESTORE)
     other.social = min(needs.NEED_MAX, other.social + needs.SOCIALISE_SOCIAL_RESTORE)
     agent.state = STATE_SOCIALISING
@@ -149,6 +287,8 @@ def explore(agent, world, *, rng):
         agent.state = STATE_IDLE
         return {'type': 'idled', 'description': f'{agent.name} stayed in place'}
     agent.x, agent.y = rng.choice(options)
+    dest_terrain = world.get_tile(agent.x, agent.y).terrain
+    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
     agent.state = STATE_EXPLORING
     return {
         'type': 'moved',
@@ -229,6 +369,36 @@ def harvest(agent, world, colony):
             'colony_id': colony.id,
             'agent_id': agent.id,
             'yield_amount': yield_amount,
+        },
+    }
+
+
+def deposit_cargo(agent, colony):
+    """Drop the agent's foraged pouch into the colony's shared stock.
+
+    Pre-conditions:
+      * agent standing on the colony's camp tile
+      * agent.cargo > 0
+
+    Violations → idled no-op. Success → colony.food_stock bumps by the
+    whole cargo value, agent.cargo resets to 0, emits 'deposited' with
+    the amount so the UI can flash the feedback.
+    """
+    cargo = getattr(agent, 'cargo', 0.0)
+    if not colony.is_at_camp(agent.x, agent.y):
+        return {'type': 'idled', 'description': f'{agent.name} not at camp'}
+    if cargo <= 0:
+        return {'type': 'idled', 'description': f'{agent.name} has nothing to deposit'}
+    amount = cargo
+    colony.food_stock += amount
+    agent.cargo = 0.0
+    return {
+        'type': 'deposited',
+        'description': f'{agent.name} dropped off {amount:g} food',
+        'data': {
+            'agent_id': agent.id,
+            'colony_id': colony.id,
+            'amount': amount,
         },
     }
 

@@ -31,7 +31,9 @@ def test_create_simulation_persists_initial_state(db_session):
     sim = simulation_service.create_simulation(
         width=5, height=5, seed=1, agent_count=2,
     )
-    assert sim.current_tick == 0
+    # Demo bootstrap offset: service bumps tick past the opening dawn
+    # so the UI opens in 'day' phase.
+    assert sim.current_tick == cycle.TICKS_PER_PHASE
     # DB rows landed in every table.
     assert db.session.query(models.WorldTile).count() == 25
     assert db.session.query(models.Agent).count() == 2
@@ -55,7 +57,7 @@ def test_step_simulation_advances_tick_and_persists_events(db_session):
     events = simulation_service.step_simulation(ticks=5)
     assert events  # engine emits at least one event per alive agent per tick
     sim = simulation_service.get_current_simulation()
-    assert sim.current_tick == 5
+    assert sim.current_tick == cycle.TICKS_PER_PHASE + 5
     # Events persisted.
     assert db.session.query(models.Event).count() == len(events)
 

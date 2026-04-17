@@ -121,7 +121,11 @@ class World:
     @staticmethod
     def _roll_resource(terrain, rng):
         if terrain == 'grass' and rng.random() < FOOD_ON_GRASS_CHANCE:
-            return 'food', INITIAL_RESOURCE_AMOUNT['food']
+            # Food is variable per tile (2–10 units) so the 'x N' badge
+            # shows actual depletion rather than a flat starting value.
+            # Wood/stone stay fixed — no visible serving badge on those
+            # and the gathering loop already feels right at a cap.
+            return 'food', float(rng.randint(2, 10))
         if terrain == 'forest':
             return 'wood', INITIAL_RESOURCE_AMOUNT['wood']
         if terrain == 'stone':

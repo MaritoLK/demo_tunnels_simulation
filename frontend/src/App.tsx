@@ -113,16 +113,20 @@ export function App() {
           <LabeledNumber label="ticks" value={steps} onChange={setSteps} />
           <label className="field">
             <span className="field__label">
-              speed <span className="field__hint">{(sim.data?.speed ?? 1).toFixed(1)}×</span>
+              speed <span className="field__hint">×</span>
             </span>
             <input
-              type="range"
-              className="field__slider"
+              type="number"
+              className="field__input"
               min={0.1}
               max={10}
               step={0.1}
               value={sim.data?.speed ?? 1}
-              onChange={(e) => simControl.mutate({ speed: Number(e.target.value) })}
+              onChange={(e) => {
+                const next = parseNumberInput(e.target.value, sim.data?.speed ?? 1);
+                const clamped = Math.min(10, Math.max(0.1, next));
+                simControl.mutate({ speed: clamped });
+              }}
               disabled={simStatus !== 'ok'}
             />
           </label>

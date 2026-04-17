@@ -63,6 +63,12 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
   stone: '#d0d0d8', // light stone
 };
 
+// Units of food consumed per forage action. Mirrors backend
+// needs.FORAGE_TILE_DEPLETION. Small magic number duplicated across the
+// wire boundary rather than added to every /world/state payload — it
+// only drives a cosmetic serving badge.
+const FORAGE_SERVING = 2;
+
 export class Canvas2DRenderer implements Renderer {
   private host: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -160,8 +166,15 @@ export class Canvas2DRenderer implements Renderer {
       const delta = now - this.lastTickBoundaryAt;
       // Bound the EMA: a laptop that sleeps for a minute shouldn't
       // pin the pollInterval at 60s. 3s covers 1 Hz sim speed with
-      // plenty of slack; anything longer is treated as "tab was idle,
-      // reseed from default" by leaving pollIntervalMs alone.
+      // plenty of slack; anything longer is dropped from the EMA —
+      // pollIntervalMs keeps its last known value, not a reseed.
+      // Consequence after a long sleep: the stale value persists
+      // until the next sub-3s tick advance reseeds it. alpha clamps
+      // to [0, 1] so the user never sees bogus positions — worst
+      // case is one poll's worth of bodies pinned at target on wake,
+      // then normal interpolation resumes. Explicit reseed via Page
+      // Visibility listener considered and deferred: not observable
+      // in demo conditions, more surface than the symptom justifies.
       if (delta > 0 && delta < 3000) {
         this.pollIntervalMs = this.pollIntervalMs * 0.7 + delta * 0.3;
       }
@@ -222,6 +235,14 @@ export class Canvas2DRenderer implements Renderer {
               0, 0, SOURCE_TILE_PX, SOURCE_TILE_PX,
               px + meatOffset, py + meatOffset, meatSize, meatSize,
             );
+            // Serving count badge — one meat sprite can hold several
+            // forage actions' worth of food. Without this, the sprite
+            // looks identical after each forage until it vanishes on
+            // the last serving. Only show ≥2 servings; "×1" is noise.
+            const servings = Math.ceil(tile.resource_amount / FORAGE_SERVING);
+            if (servings >= 2 && tilePx >= 14) {
+              drawFoodBadge(ctx, servings, px, py, tilePx);
+            }
           }
           // Wood/stone: no overlay. The bush/rock decoration sprite
           // already communicates the resource; a dot on top produces
@@ -256,9 +277,31 @@ export class Canvas2DRenderer implements Renderer {
     // The house is blitted oversized (2 tiles wide × 3 tall) and anchored
     // so its base sits on the camp tile — same pattern as pawns, so the
     // building stands on the ground rather than hovering over it.
+    // Pulse factor: 0..1 sinusoid on wall-clock time, ~2s period. Same
+    // `now` captured earlier this frame so the pulse ticks at refresh
+    // rate without fighting the interp clock. Suppressed under
+    // reducedMotion so a11y users don't get a throbber.
+    const pulse = reducedMotion ? 0 : (Math.sin(now / 320) + 1) * 0.5;
     for (const colony of colonies) {
       const px = colony.camp_x * tilePx;
       const py = colony.camp_y * tilePx;
+      // "Go-home" magnet ring — breathes around every camp so viewers
+      // read the tile as a gravity well, not just a building. Drawn
+      // BEFORE the house so the sprite covers the tile itself and the
+      // ring flares outward. Anchored on the tile center, radius
+      // modulated by the shared pulse.
+      const campCx = px + tilePx / 2;
+      const campCy = py + tilePx / 2;
+      const baseR = tilePx * 0.85;
+      const ringR = baseR + pulse * tilePx * 0.25;
+      ctx.save();
+      ctx.strokeStyle = colony.color;
+      ctx.globalAlpha = 0.15 + pulse * 0.25;
+      ctx.lineWidth = Math.max(1.5, tilePx * 0.08);
+      ctx.beginPath();
+      ctx.arc(campCx, campCy, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
       const houseSprite = sprites ? sprites.houses[colony.name] : undefined;
       if (sprites && houseSprite) {
         const houseW = tilePx * 2;
@@ -371,6 +414,27 @@ export class Canvas2DRenderer implements Renderer {
       ctx.ellipse(cx, cy + r * 0.55, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
       ctx.fill();
 
+      // Terrain-traversal feedback: backend sets state='traversing' while
+      // the agent burns move_cooldown ticks on rough terrain (forest/sand/
+      // stone). Render dust puffs beneath the feet so the pause reads as
+      // "slowed by terrain" rather than "frozen bug". Drawn under the
+      // body so the pawn silhouette stays crisp on top.
+      const traversing = a.alive && a.state === 'traversing';
+      if (traversing) {
+        ctx.fillStyle = 'rgba(200,175,130,0.55)';
+        for (const offset of [-0.45, 0, 0.45]) {
+          ctx.beginPath();
+          ctx.ellipse(
+            cx + offset * r,
+            cy + r * 0.55,
+            r * 0.22,
+            r * 0.14,
+            0, 0, Math.PI * 2,
+          );
+          ctx.fill();
+        }
+      }
+
       if (sprites) {
         // Tight crop on the pawn body inside the 192×192 frame. The
         // body lives at roughly (46, 30)–(146, 160) in source pixels —
@@ -388,6 +452,11 @@ export class Canvas2DRenderer implements Renderer {
         if (!a.alive) {
           ctx.save();
           ctx.globalAlpha = 0.35;
+          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+          ctx.restore();
+        } else if (traversing) {
+          ctx.save();
+          ctx.globalAlpha = 0.75;
           ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
           ctx.restore();
         } else {
@@ -413,13 +482,22 @@ export class Canvas2DRenderer implements Renderer {
       // Colony halo — a colored ring above the head says "this agent is
       // Red's". Applied to both sprite and procedural paths; the ring is
       // small and high so it doesn't fight the body silhouette.
+      // Rogue agents: broken-dash ring in a desaturated tone — they've
+      // lost their colony tie, so the visual should too.
       const colonyColor = a.colony_id != null ? colonyColorById.get(a.colony_id) : undefined;
       if (colonyColor) {
-        ctx.strokeStyle = colonyColor;
+        ctx.save();
+        if (a.rogue) {
+          ctx.strokeStyle = 'rgba(140,140,150,0.7)';
+          ctx.setLineDash([Math.max(2, tilePx * 0.1), Math.max(2, tilePx * 0.08)]);
+        } else {
+          ctx.strokeStyle = colonyColor;
+        }
         ctx.lineWidth = Math.max(1.5, tilePx * 0.12);
         ctx.beginPath();
         ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.restore();
       }
 
       if (a.id === selectedAgentId) {
@@ -586,4 +664,29 @@ function drawResourceDot(
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = Math.max(1, tilePx * 0.06);
   ctx.stroke();
+}
+
+// "×N" badge in the bottom-right of the food tile, so the player can
+// see the stack shrink forage-by-forage rather than wait for the whole
+// sprite to disappear on the last serving.
+function drawFoodBadge(
+  ctx: CanvasRenderingContext2D,
+  servings: number,
+  px: number,
+  py: number,
+  tilePx: number,
+): void {
+  const label = `×${servings}`;
+  const fontPx = Math.max(9, Math.floor(tilePx * 0.32));
+  ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  const tx = px + tilePx - Math.max(2, tilePx * 0.08);
+  const ty = py + tilePx - Math.max(2, tilePx * 0.06);
+  // Outline first so the digits read against any terrain tint.
+  ctx.lineWidth = Math.max(2, Math.floor(tilePx * 0.1));
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(label, tx, ty);
+  ctx.fillStyle = '#ffe9c4';
+  ctx.fillText(label, tx, ty);
 }

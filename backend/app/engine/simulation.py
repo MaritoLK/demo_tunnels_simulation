@@ -189,4 +189,13 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
     else:
         for i in range(agent_count):
             sim.spawn_agent(f'{agent_name_prefix}-{i + 1}')
+    # Loner promotion: sims large enough to have "social depth" (>4 agents)
+    # get exactly two loners. Selection draws from rng_spawn so it's
+    # reproducible under the sim seed contract. Small sims get none —
+    # skipping the branch keeps legacy 2-4 agent tests behaving identically.
+    _LONER_MIN_POPULATION = 4
+    _LONER_COUNT = 2
+    if len(sim.agents) > _LONER_MIN_POPULATION:
+        for loner in sim.rng_spawn.sample(sim.agents, _LONER_COUNT):
+            loner.loner = True
     return sim

@@ -82,9 +82,11 @@ def test_dusk_phase_always_steps_toward_camp():
     assert decide_action(a, w, _colony(), 'dusk') == 'step_to_camp'
 
 
-def test_night_phase_returns_rest():
+def test_night_phase_at_camp_returns_rest():
+    """Night behaviour split post-outdoors: at camp → full rest.
+    Off-camp night rest is covered in test_rogue_and_outdoors."""
     w = _grass_world()
-    a = _fresh_agent()
+    a = _fresh_agent(x=0, y=0)  # on camp
     assert decide_action(a, w, _colony(), 'night') == 'rest'
 
 

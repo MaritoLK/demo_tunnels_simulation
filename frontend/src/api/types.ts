@@ -37,6 +37,16 @@ export interface Agent {
   age: number;
   alive: boolean;
   colony_id: number | null;
+  // True once the agent's social need hit zero. One-way. Rogue agents
+  // skip camp-seeking behaviour backend-side; the UI signals this
+  // visually (dimmed halo, "rogue" badge in the panel). Optional on
+  // the wire so legacy fixtures and older snapshots (pre-feat) keep
+  // type-checking — undefined is treated as false everywhere we read it.
+  rogue?: boolean;
+  // Loner: flagged at spawn for 2 agents per sim (when count > 4).
+  // Their social need decays ~4× faster, making them the most likely
+  // candidates to tip into rogue within a demo window.
+  loner?: boolean;
 }
 
 export interface Colony {
