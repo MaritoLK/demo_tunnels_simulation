@@ -28,3 +28,6 @@ INTERVIEW_DEFENSE.md
 
 # Headless screenshot tool (playwright + chromium binary, ~300MB)
 screenshots/
+
+# Presentation / design artifacts — kept locally, not versioned.
+*.docx
