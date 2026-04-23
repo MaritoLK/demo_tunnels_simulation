@@ -257,9 +257,12 @@ def test_tick_agent_well_fed_rest_recovers_health_over_time():
 
 
 def test_tick_agent_sets_last_decision_reason():
-    """After one tick, agent.last_decision_reason is populated with the
-    same string decide_action returned. Empty string before the first
-    tick is also a contract (Agent.__init__ default)."""
+    """Pre-tick: agent.last_decision_reason == '' (Agent.__init__ default).
+    Post-tick: non-empty and contains at least one known semantic token.
+    The token check is a sanity guard against a placeholder reason like
+    '???' or whitespace; exact-string equality is intentionally avoided
+    so future wording tweaks don't cascade (same anti-fragility argument
+    as test_decision_reason.py)."""
     world = _grass_world()
     a = Agent('Alice', 1, 1, colony_id=1)
     assert a.last_decision_reason == ''          # pre-tick default
