@@ -120,29 +120,29 @@ def test_agent_to_dict_decision_reason_empty_pre_tick():
     assert dumped['decision_reason'] == ''
 
 
-def test_default_simulation_colonies_have_sprite_palette():
-    """4-colony default spawn: each colony has sprite_palette matching
-    its name. Locks DEFAULT_COLONY_PALETTE → EngineColony threading."""
-    from app.engine.simulation import new_simulation
-    from app.engine.colony import EngineColony
+def test_build_default_colonies_assigns_palette_per_position():
+    """The 4-colony demo spawn: each EngineColony built by
+    _build_default_colonies carries a sprite_palette matching its name.
+    Locks the DEFAULT_COLONY_PALETTE → _build_default_colonies → EngineColony
+    threading; manually constructing colonies in the test would only
+    re-prove EngineColony.__init__ stores what it's given."""
+    from app.services.simulation_service import _build_default_colonies
 
-    colonies = [
-        EngineColony(id=i+1, name=name, color=color, camp_x=i, camp_y=i,
-                     food_stock=10, sprite_palette=name)
-        for i, (name, color) in enumerate(
-            [('Red', '#e74c3c'), ('Blue', '#3498db')]
-        )
-    ]
-    sim = new_simulation(10, 10, seed=42, colonies=colonies,
-                         agents_per_colony=2)
-    for c in sim.colonies.values():
-        assert c.sprite_palette in ('Red', 'Blue')
+    colonies = _build_default_colonies(width=20, height=20, n_colonies=4)
+    palettes = [c.sprite_palette for c in colonies]
+    assert palettes == ['Red', 'Blue', 'Purple', 'Yellow']
+    # Names parallel palettes for the demo palette (no rename has happened).
+    assert [c.name for c in colonies] == palettes
 
 
 def test_synthesized_default_colony_sprite_palette_is_blue():
-    """Simulation.__init__ with colonies=None synthesizes a default.
-    That default gets sprite_palette='Blue' so the frontend fallback
-    is explicit at the data layer, not implicit in the renderer."""
+    """Simulation.__init__ with colonies=None synthesizes a default colony
+    whose sprite_palette resolves to 'Blue' — the renderer's fallback
+    contract. Note: this test asserts the *behavior* (default == 'Blue'),
+    not the *literal* `sprite_palette='Blue'` at the synthesis site —
+    EngineColony.__init__'s parameter default is also 'Blue', so a future
+    drop of the explicit kwarg would still pass this test. Keeping the
+    explicit kwarg is a code-style guarantee, not a behavioral one."""
     from app.engine.simulation import Simulation
     from app.engine.world import World, Tile
 
