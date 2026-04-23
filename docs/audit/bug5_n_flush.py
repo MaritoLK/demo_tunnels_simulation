@@ -32,6 +32,16 @@ from app.services.simulation_service import create_simulation as real_create_sim
 AGENTS_INSERT = re.compile(r'INSERT INTO agents\b', re.IGNORECASE)
 
 
+def _tile_dict(t):
+    """Pre-fix tile→dict shape used by the historical bulk_insert_mappings path.
+    Inlined here because the prod helper was retired post-cleanup; this script
+    intentionally reproduces the older payload shape."""
+    return {
+        'x': t.x, 'y': t.y, 'terrain': t.terrain,
+        'resource_type': t.resource_type, 'resource_amount': t.resource_amount,
+    }
+
+
 def clear_state():
     db.session.query(models.Event).delete()
     db.session.query(models.Agent).delete()
@@ -44,7 +54,7 @@ def create_sim_per_agent_flush(width, height, seed, agent_count):
     """Current implementation — one flush per agent."""
     clear_state()
     sim = new_simulation(width, height, seed=seed, agent_count=agent_count)
-    tile_mappings = [mappers.tile_to_row_mapping(t) for row in sim.world.tiles for t in row]
+    tile_mappings = [_tile_dict(t) for row in sim.world.tiles for t in row]
     db.session.bulk_insert_mappings(models.WorldTile, tile_mappings)
     for agent in sim.agents:
         row = mappers.agent_to_row(agent)
@@ -59,7 +69,7 @@ def create_sim_batched(width, height, seed, agent_count):
     """Fixed implementation — one flush for all agents."""
     clear_state()
     sim = new_simulation(width, height, seed=seed, agent_count=agent_count)
-    tile_mappings = [mappers.tile_to_row_mapping(t) for row in sim.world.tiles for t in row]
+    tile_mappings = [_tile_dict(t) for row in sim.world.tiles for t in row]
     db.session.bulk_insert_mappings(models.WorldTile, tile_mappings)
     rows = [mappers.agent_to_row(a) for a in sim.agents]
     db.session.add_all(rows)

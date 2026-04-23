@@ -38,6 +38,16 @@ class InjectedFailure(RuntimeError):
     pass
 
 
+def _tile_dict(t):
+    """Pre-fix tile→dict shape used by the historical bulk_insert_mappings path.
+    Inlined here because the prod helper was retired post-cleanup; this script
+    intentionally reproduces the older payload shape."""
+    return {
+        'x': t.x, 'y': t.y, 'terrain': t.terrain,
+        'resource_type': t.resource_type, 'resource_amount': t.resource_amount,
+    }
+
+
 def create_sim_no_rollback(width, height, seed, agent_count):
     """Pre-fix copy: no try/except. Matches the shape of the old code path."""
     db.session.query(models.Event).delete()
@@ -48,7 +58,7 @@ def create_sim_no_rollback(width, height, seed, agent_count):
 
     sim = new_simulation(width, height, seed=seed, agent_count=agent_count)
 
-    tile_mappings = [mappers.tile_to_row_mapping(t) for row in sim.world.tiles for t in row]
+    tile_mappings = [_tile_dict(t) for row in sim.world.tiles for t in row]
     db.session.bulk_insert_mappings(models.WorldTile, tile_mappings)
 
     agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
@@ -76,7 +86,7 @@ def create_sim_with_rollback(width, height, seed, agent_count):
 
         sim = new_simulation(width, height, seed=seed, agent_count=agent_count)
 
-        tile_mappings = [mappers.tile_to_row_mapping(t) for row in sim.world.tiles for t in row]
+        tile_mappings = [_tile_dict(t) for row in sim.world.tiles for t in row]
         db.session.bulk_insert_mappings(models.WorldTile, tile_mappings)
 
         agent_rows = [mappers.agent_to_row(a) for a in sim.agents]

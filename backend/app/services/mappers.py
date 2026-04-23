@@ -65,19 +65,6 @@ def tile_to_row(tile):
     )
 
 
-def tile_to_row_mapping(tile):
-    # Legacy dict form, retained only for audit/bug5_n_flush.py and
-    # audit/bug6_no_rollback.py which reproduce the pre-fix bulk_insert_mappings
-    # shape. The live service now goes through tile_to_row + add_all.
-    return {
-        'x': tile.x,
-        'y': tile.y,
-        'terrain': tile.terrain,
-        'resource_type': tile.resource_type,
-        'resource_amount': tile.resource_amount,
-    }
-
-
 def row_to_tile(row):
     return EngineTile(
         x=row.x,
