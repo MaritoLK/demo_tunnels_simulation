@@ -67,34 +67,32 @@ These block / shape the cleanup. Please answer inline (edit this file) or in cha
 
 | # | Finding | File:line | Action | Status |
 |---|---------|-----------|--------|--------|
-| T1.B1 | `world.py:71` redundant `self.tiles = []` overwritten by `generate()` line 94 | `backend/app/engine/world.py:71` | Delete line | proposed |
-| T1.B2 | Inconsistent local imports: `from . import config` inline in `actions.py:385, 511` | `backend/app/engine/actions.py:13,385,511` | Hoist to module top | proposed |
-| T1.B3 | `rest()` and `rest_outdoors()` near-identical (15-17 LOC each, differ only in `energy_restore` + `heal_bonus`) | `backend/app/engine/actions.py:259-292` | Collapse to `rest(agent, *, outdoors=False)` (-10 LOC). **Note:** boolean-flag param violates "avoid bool flags" — alternative: keep as two thin wrappers around one helper | proposed |
-| T1.B4 | `tile_to_row_mapping()` only used by `audit/` scratchpad scripts | `backend/app/services/mappers.py:68-78` | Delete after Open Q4 resolution; update audit scripts (or delete them) | proposed (gated on Q4) |
-| T1.B5 | Add docstrings to `engine/cycle.py`, `engine/config.py`, `engine/needs.py` constants — each constant gets a one-line "why" | `backend/app/engine/{cycle,config,needs}.py` | +15 doc lines, no logic change | proposed |
-| T1.B6 | Magic-hash constants in renderer-style code? N/A backend. Skip. | — | — | — |
-| T1.B7 | `simulation_service.py:237-251` dirty-tile + dirty-colony discovery share a pattern (set comprehension over event types) | `backend/app/services/simulation_service.py:237-251` | Extract `_event_keys_by_type(events, types, key_path)` helper (-10 LOC) | proposed |
+| T1.B1 | `world.py:71` redundant `self.tiles = []` overwritten by `generate()` line 94 | `backend/app/engine/world.py:71` | Delete line | **done** (5fb5d45) |
+| T1.B2 | Inconsistent local imports: `from . import config` inline in `actions.py:385, 511` (and `world.py:162`) | `backend/app/engine/actions.py`, `world.py` | Hoist to module top | **done** (e7b9d96) |
+| T1.B3 | `rest()` and `rest_outdoors()` near-identical | `backend/app/engine/actions.py:259-292` | Collapse via helper or boolean flag | **rejected** — bodies differ in 4 dimensions (energy multiplier, heal branch, event type, description). Helper + 2 wrappers nets ≈0 LOC and adds indirection. Per CLAUDE.md "no premature abstraction." |
+| T1.B4 | `tile_to_row_mapping()` only used by `audit/` scratchpad scripts | `backend/app/services/mappers.py:68-78` | Delete + inline pre-fix shape into bug5/bug6 scripts | **done** (d449ee5) |
+| T1.B5 | Add docstrings to `engine/cycle.py`, `engine/config.py`, `engine/needs.py` constants | various | +15 doc lines | **rejected** — constants are well-named; module docstrings already cite the spec for derivation; per CLAUDE.md "default to no comments" the inline rationale would be filler. |
+| T1.B7 | `simulation_service.py` dirty-tile + dirty-colony discovery share a pattern | `simulation_service.py:237-251` | Extract `_event_keys_by_type` helper | **rejected** — projection differs (tuple vs scalar) + filter sets differ; helper would require lambda + frozenset per call, growing each callsite. Two 4-line set-comps stay clearer. Per CLAUDE.md "three similar lines is better than premature abstraction." |
+| T1.I2 | Migration `env.py:21` uses deprecated `get_engine()` | `backend/migrations/env.py:21` | Use `db.engine` directly (pinned Flask-SQLAlchemy 3.1.1 supports it) | **done** (5e1e3c7) |
 
 ### Frontend
 
 | # | Finding | File:line | Action | Status |
 |---|---------|-----------|--------|--------|
-| T1.F1 | Duplicated scalar constants across components: `CARRY_MAX=8`, `CROP_MATURE_TICKS=60`, `TICKS_PER_PHASE=30` appear in 2-3 files each | `AgentPanel.tsx:17`, `TilePanel.tsx:16`, `ClockWidget.tsx:10`, `Canvas2DRenderer.ts:67,378` | Create `frontend/src/constants.ts` (engine-tied scalars). Net: +5 / -8 LOC | proposed |
-| T1.F2 | README on backend port (covered in T0.1) | — | — | — |
-| T1.F3 | `WorldCanvas.tsx:276` reads Zustand via `useViewStore.getState()` inside wheel handler; `zoom` already captured at line 80. Redundant + risk of stale read | `frontend/src/components/WorldCanvas.tsx:276` | Use the closure value (-1 LOC) | proposed |
-| T1.F4 | Renderer `STATE_LABEL` map (`Canvas2DRenderer.ts:74-85`) silently mirrors backend state strings — backend addition would skip frontend label | `frontend/src/render/Canvas2DRenderer.ts:74-85` | Add comment linking to `backend/app/engine/actions.py` STATE_* constants. **Candidate:** consider exposing states via `/api/v1/world/state` envelope instead | proposed |
-| T1.F5 | Magic XOR constants in procedural speckle hash | `frontend/src/render/Canvas2DRenderer.ts:280` | Hoist `HASH_X = 73856093`, `HASH_Y = 19349663` with one-line comment (+4 LOC) | proposed |
-| T1.F6 | `App.tsx:67-71` four near-identical `<LabeledNumber>` calls | `frontend/src/App.tsx:67-71` | Loop over an array of param descriptors (-10 LOC) | proposed |
-| T1.F7 | `App.tsx:250-254` `NUMBER_FORMATTER` wrapper used once; inline or remove | `frontend/src/App.tsx:250-254` | Inline `Intl.NumberFormat(...).format(n)` or drop entirely (-3 LOC) | proposed |
+| T1.F1 | Duplicated scalar constants across components | various | Create `frontend/src/constants.ts` | **rejected** — only `CARRY_MAX` actually duplicates (2 callsites: AgentPanel, Canvas2DRenderer); `CROP_MATURE_TICKS` and `TICKS_PER_PHASE` are single-use. Author's "wire boundary" comment justifies the local-mirror pattern. Centralizing 1 scalar with explicit author rationale = preemptive (YAGNI). |
+| T1.F3 | `WorldCanvas.tsx:276` `useViewStore.getState()` inside wheel handler | `WorldCanvas.tsx:276` | Use closure `zoom` value | **rejected** — `zoom` is NOT in the useEffect deps array (line 303). Closure capture would be STALE on zoom change. `getState()` is the correct intentional fix; audit had the bug direction backward. |
+| T1.F4 | `STATE_LABEL` mirrors backend state strings without typed bridge | `Canvas2DRenderer.ts:74-85` | Add doc comment | **rejected** — comment alone doesn't fix the coupling; the real fix is exposing states in API envelope (T3 candidate). Filler comment would degrade rather than clarify. |
+| T1.F5 | Magic XOR constants `73856093`, `19349663` in spatial hash | `Canvas2DRenderer.ts:280` | Hoist as named constants | **rejected** — these are the classic Teschner et al. spatial-hash multipliers; a reader knowledgeable about hashing recognises them inline. Naming with a 1-line comment adds 4 LOC for marginal recognition gain. |
+| T1.F6 | `App.tsx:67-71` five `<LabeledNumber>` calls | `App.tsx:67-71` | Loop over param descriptors | **rejected** — 5 hand-named form fields is enumeration, not duplication. Each line answers "what fields exist?" directly. Loop hides intent for marginal LOC save. |
+| T1.F7 | `App.tsx` `NUMBER_FORMATTER` wrapper used at one site | `App.tsx:250-254` | Inline `toLocaleString` | **done** (d4d128c) |
 
 ### Infra
 
 | # | Finding | File:line | Action | Status |
 |---|---------|-----------|--------|--------|
-| T1.I1 | CI duplicates `npm ci` in `frontend-tests` + `frontend-typecheck` jobs (~30s overhead) | `.github/workflows/ci.yml` | Optional: factor into a reusable workflow or shared cache. Low priority — CI green and fast enough | proposed (low) |
-| T1.I2 | Migration `env.py:21` uses deprecated `get_engine()` (Flask-SQLAlchemy 3.2 deprecation warning in test output) | `backend/migrations/env.py:21` | Replace with `current_app.extensions['migrate'].db.engine` per Flask-SQLAlchemy 3.x docs | proposed |
+| T1.I1 | CI duplicates `npm ci` in two frontend jobs | `.github/workflows/ci.yml` | Factor or accept | **deferred** — current overhead ~30s, not a blocker pre-demo. |
 
-**T1 LOC delta:** ≈ −40 LOC code, +20 LOC docs. Modest but meaningful clarity gain.
+**T1 actual LOC delta:** ≈ −25 LOC source. 5 accepted, 8 rejected per CLAUDE.md "no premature abstraction" / "no filler comments" guidance.
 
 ---
 
@@ -129,12 +127,51 @@ These block / shape the cleanup. Please answer inline (edit this file) or in cha
 
 | # | Finding | Gate | Action |
 |---|---------|------|--------|
-| T3.B1 | Retire `_legacy_decide_action` + `_legacy_tick_agent` in `engine/agent.py` | All legacy callers (some tests, audit scripts) migrated to phase-aware signature | Delete legacy paths (-60 LOC). Removes dual-track complexity. |
-| T3.B2 | `getattr(agent, 'rogue', False)` defensiveness | All test agents instantiated via `Agent()` (slot-enforced) | Replace with direct `agent.rogue` (-2 LOC each site). |
+| T3.B1 | Retire `_legacy_decide_action` + `_legacy_tick_agent` in `engine/agent.py` | All legacy callers migrated | See **Round D fork below** — user-approved scope but two paths (α / β) exist. |
+| T3.B2 | `getattr(agent, 'rogue', False)` defensiveness | Bundled with T3.B1 | Replace with direct `agent.rogue` (-2 LOC each site). |
 | T3.B3 | Loner-decay re-application after rogue flip (semantic question) | Decision: is "rogue once = always-rogue" intentional? | Add docstring documenting one-way state OR add re-entry guard. **Candidate — needs clarification, not yet a bug.** |
 | T3.B4 | `terrain` silent fallback to move cost 1 in `step_toward()`/`forage()`/`explore()` | Decision: fail-loud on missing terrain key, or keep permissive? | Add `assert` or restructure `TERRAIN_MOVE_COST` access. **Candidate — needs design call.** |
 | T3.F1 | Refactor `useState` cluster in `App.tsx:28-33` into `useReducer` or `useSimParams()` | Foundation routing lands (App.tsx will be replaced) | Skip — likely obsoleted by router migration. |
 | T3.F2 | EventLog key stability under filter/reorder | Reproduce: toggle "selected only" + watch DevTools | **Candidate — needs repro before fix.** |
+
+---
+
+## Round D fork — legacy retirement scope
+
+User green-lit "remove any legacy thing" (2026-04-23). Survey discovered the scope is wider than the audit framed:
+
+**Truly-legacy (uncontested removal targets):**
+- `_legacy_decide_action` (engine/agent.py:163-177) — 5-step priority ladder, superseded by 9-step phase-aware ladder
+- `_legacy_tick_agent` (engine/agent.py:282-297) — pre-cultivation tick driver
+- Gates in `decide_action` (lines 83-88) and `tick_agent` (lines 235-236) routing to those legacy paths
+- `getattr(agent, 'rogue', False)` / `getattr(agent, 'cargo', 0.0)` / `getattr(agent, 'loner', False)` defenses (slot-enforced now)
+
+**Wider blast radius (less clear):**
+- `Simulation.step()` legacy branch (lines 99/111-122) — calls `tick_agent` with no `colonies_by_id`/`phase`
+- `new_simulation(agent_count=N)` convenience overload — used by ~20 test files
+- `create_simulation(agent_count=N)` convenience overload — used by ~10 test/integration files
+- 8 audit scripts call legacy `tick_agent` directly
+- test_agent.py calls legacy `decide_action(a)` 11× and legacy `tick_agent` 5×
+
+### Two end-states
+
+**(α) Minimal — delete the named "_legacy_" code only.**
+- Migrate test_agent.py 16 callsites to phase-aware form.
+- Migrate 8 audit-script `tick_agent` callsites.
+- Delete `_legacy_decide_action`, `_legacy_tick_agent`, the gates, `getattr` defenses.
+- Synthesize a default `EngineColony` inside `Simulation.__init__` when `colonies` is empty, so `Simulation.step()` always runs the colony-aware path → preserves the `agent_count=N` convenience overload for the ~30 callers without forcing them to construct colony objects.
+- LOC: ≈ −80 source, +12 synthesis logic.
+- Risk: low. Subtle behavior shift: agents at (0,0) in legacy-shaped sims now register as `at_camp` (default colony's camp is (0,0)) — a couple of tests may need to relocate their agents away from (0,0), but the engine path they exercise is the canonical one.
+
+**(β) Full — drop the convenience overloads too.**
+- Same as α but additionally: remove `agent_count=N` from `new_simulation` and `create_simulation`. Force every caller to construct `EngineColony` objects explicitly (`agents_per_colony=N`).
+- Touches ~30 test files, requires a shared `_default_colony()` test helper.
+- LOC: ≈ −80 source, +200 test boilerplate.
+- Risk: medium-high. Many small test edits in a tight window before re-demo. Anything that mis-migrates becomes a silent test rewrite.
+
+**Recommendation: α.** Same dead-code removal, less churn, no test-behavior surprises beyond the at-camp shift (fixed by repositioning agents). β is a "cleanup of the cleanup" that's better suited to post-demo.
+
+**Awaiting user pick** before Round D execution.
 
 ---
 
@@ -219,3 +256,6 @@ Each Phase 2 commit will:
 
 - **2026-04-23 12:10** — Phase 1 audit complete. Baseline 264 green confirmed. Decisions doc seeded. Awaiting user sign-off on open questions before Phase 2.
 - **2026-04-23 12:55** — Round A (T0) complete. 8 commits (4ceda75 → 30f418a). Branch renamed `archive/python-foundation` → `master` (local). Baseline re-verified: 227 backend + 36 frontend = 263 green (frontend down 1 from smoke.test.ts deletion, expected). Tag: `cleanup-round-a`.
+- **2026-04-23 13:10** — Round B (backend T1) executed: 4 accepts (T1.B1, T1.I2, T1.B2, T1.B4), 3 rejects (T1.B3, T1.B5, T1.B7). Commits 5fb5d45, 5e1e3c7, e7b9d96, d449ee5. Pytest after each: 227 green throughout. Deprecation warning in test output eliminated.
+- **2026-04-23 13:05** — Round C (frontend T1) executed: 1 accept (T1.F7), 5 rejects (T1.F1, T1.F3, T1.F4, T1.F5, T1.F6). Commit d4d128c. vitest+tsc green: 36 tests, 0 type errors.
+- **2026-04-23 13:25** — Round D scope discovery surfaced a wider blast radius than the audit framed. Two end-states drafted (α minimal, β full). Awaiting user pick before any Round D code change.
