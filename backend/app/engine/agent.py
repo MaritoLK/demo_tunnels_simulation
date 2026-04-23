@@ -147,24 +147,7 @@ def decide_action(agent, world, colony, phase):
     return 'explore'
 
 
-def _legacy_decide_action(agent):
-    """Pre-cultivation decision chain. Kept for legacy one-arg callers
-    (test_agent.py suite, audit/*.py scripts) until they migrate to the
-    new signature. Identical to the original body before T10."""
-    if agent.health < needs.HEALTH_CRITICAL:
-        return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
-    if agent.hunger < needs.HUNGER_CRITICAL:
-        return 'forage'
-    if agent.energy < needs.ENERGY_CRITICAL:
-        return 'rest'
-    if agent.hunger < needs.HUNGER_MODERATE:
-        return 'forage'
-    if agent.social < needs.SOCIAL_LOW:
-        return 'socialise'
-    return 'explore'
-
-
-def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
+def execute_action(action_name, agent, world, all_agents, colony, *, rng):
     if action_name == 'forage':
         return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
@@ -240,10 +223,9 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
         agent.age += 1
         return events
 
-    # Invariant: when the new path is live, every agent belongs to a colony
-    # in the map. A miss means a data-drift bug (stale colony_id, test setup
-    # gap). Fail loud — the legacy decide_action fallback would silently
-    # bypass phase gates (night→rest, dusk→step_to_camp, dawn→eat_camp).
+    # Every agent belongs to a colony in the map. A miss means a data-drift
+    # bug (stale colony_id, test setup gap). Fail loud at the lookup boundary
+    # rather than NPE-ing later in decide_action's at_camp / cargo / plant paths.
     colony = colonies_by_id.get(agent.colony_id)
     if colony is None:
         raise KeyError(
@@ -252,24 +234,6 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
         )
     action_name = decide_action(agent, world, colony, phase)
     events.append(execute_action(action_name, agent, world, all_agents, colony, rng=rng))
-
-    agent.age += 1
-    return events
-
-
-def _legacy_tick_agent(agent, world, all_agents, *, rng):
-    """Pre-cultivation tick driver. Kept for legacy callers until migration
-    to the new phase-aware signature. Identical to the original body before T11."""
-    events = []
-
-    needs.decay_needs(agent)
-
-    if agent.health <= 0:
-        events.append(actions.die(agent))
-        return events
-
-    action_name = decide_action(agent)
-    events.append(execute_action(action_name, agent, world, all_agents, rng=rng))
 
     agent.age += 1
     return events
