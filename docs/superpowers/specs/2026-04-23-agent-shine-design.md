@@ -61,23 +61,23 @@ def decide_action(agent, world, colony, phase) -> Decision:
 
 All existing callers change from `action == 'rest'` to `decision.action == 'rest'`. Bulk rename.
 
-Reason strings (all branches):
+Reason strings (all branches). Separator is `,` not `+` — `+` reads as arithmetic.
 
 | Branch condition | Decision |
 |------------------|----------|
-| `health < HEALTH_CRITICAL` and `energy < ENERGY_CRITICAL` | `('rest', 'health < 20 + energy < 15 → rest')` |
+| `health < HEALTH_CRITICAL` and `energy < ENERGY_CRITICAL` | `('rest', 'health < 20, energy < 15 → rest')` |
 | `health < HEALTH_CRITICAL` (energy ok) | `('forage', 'health < 20 → forage to recover')` |
 | `hunger < HUNGER_CRITICAL` | `('forage', 'hunger < 20 → forage now')` |
 | `energy < ENERGY_CRITICAL` (hunger ok) | `('rest', 'energy < 15 → rest')` |
 | `phase == 'night'` | `('rest_outdoors', 'night phase → rest in place')` |
-| `at_camp` + `cargo > 0` | `('deposit', 'at camp + cargo {N} → deposit')` |
+| `at_camp` + `cargo > 0` | `('deposit', 'at camp, cargo {N} → deposit')` |
 | `at_camp` + `phase == 'dawn'` + hungry + stock + not already ate | `('eat_camp', 'dawn at camp → eat stock')` |
-| `at_camp` + `social < SOCIAL_LOW` | `('socialise', 'at camp + social < 30 → socialise')` |
+| `at_camp` + `social < SOCIAL_LOW` | `('socialise', 'at camp, social < 30 → socialise')` |
 | `not rogue` + `social < SOCIAL_LOW` | `('step_to_camp', 'social < 30 → head to camp')` |
 | `not rogue` + `cargo >= CARRY_MAX` | `('step_to_camp', 'cargo full → head to camp')` |
 | `tile.crop_state == 'mature'` | `('harvest', 'mature crop → harvest')` |
 | `tile.crop_state == 'none'` + empty + field room | `('plant', 'empty tile → plant')` |
-| `rogue` + `cargo > 0` + `hunger < HUNGER_MODERATE` | `('eat_cargo', 'rogue + hunger < 50 → eat from pouch')` |
+| `rogue` + `cargo > 0` + `hunger < HUNGER_MODERATE` | `('eat_cargo', 'rogue, hunger < 50 → eat from pouch')` |
 | `hunger < HUNGER_MODERATE` (tail) | `('forage', 'hunger < 50 → forage')` |
 | default | `('explore', 'all needs ok → explore')` |
 
@@ -95,17 +95,36 @@ events.append(execute_action(decision.action, agent, world, all_agents, colony, 
 
 Not persisted to DB — it's derivable state, regenerated every tick. Lives only in-memory on the engine Agent + in the API response.
 
-### API change
+### API changes
 
-`agent_to_dict` in `backend/app/routes/serializers.py` gains one field:
+Two new wire-format fields, one on `Agent` and one on `Colony`:
 
-```python
-'decision_reason': agent.last_decision_reason,
-```
+- `agent_to_dict` in `backend/app/routes/serializers.py` gains `'decision_reason': agent.last_decision_reason`.
+- `colony_to_dict` gains `'sprite_palette': colony.sprite_palette` (see next section — decouples sprite selection from display name).
 
-Frontend type `Agent` in `frontend/src/api/types.ts` gains `decision_reason: string;`.
+Frontend types in `frontend/src/api/types.ts`:
+- `Agent.decision_reason: string`
+- `Colony.sprite_palette: string` (values: `'Red' | 'Blue' | 'Purple' | 'Yellow'` — open union to accept future palettes).
 
-No new routes. No migrations. One serializer addition.
+### Colony sprite palette decoupling
+
+Previously proposed: look up pawn sprite sheets by `colony.name`. **Rejected** — couples visual asset choice to display-name string. The moment someone renames a colony, its agents lose their color.
+
+**Resolution:** add a `sprite_palette` field on the `Colony` model, populated at colony creation from `DEFAULT_COLONY_PALETTE`. Independent of `name` and `color` — can evolve independently (e.g., a "Red" colony could later use a different sprite palette without renaming).
+
+Touches:
+- `backend/app/models/colony.py` — new column `sprite_palette VARCHAR(16) NOT NULL DEFAULT 'Blue'`.
+- `backend/migrations/versions/<hash>_colony_sprite_palette.py` — add column with `server_default='Blue'`, backfill existing rows from name-match where possible.
+- `backend/app/engine/colony.py` — `EngineColony.__slots__` gains `'sprite_palette'`.
+- `backend/app/services/simulation_service.py::DEFAULT_COLONY_PALETTE` — extend each tuple to `(name, color, sprite_palette)`. For the 4 demo colonies, `sprite_palette` matches `name` at creation time; post-rename they diverge cleanly.
+- `backend/app/services/simulation_service.py::_build_default_colonies` — pass sprite_palette to `EngineColony(...)`.
+- `backend/app/engine/simulation.py::Simulation.__init__` synthesized default colony — add `sprite_palette='Blue'`.
+- `backend/app/services/mappers.py::colony_to_row` / `row_to_colony` — thread the new field.
+- `backend/app/routes/serializers.py::colony_to_dict` — emit the new field.
+
+Frontend pawn sheet lookup: `atlas.pawns[colony.sprite_palette] ?? atlas.pawns.Blue`.
+
+No new routes. One new migration.
 
 ### Frontend file map
 
@@ -136,14 +155,17 @@ assets/tiny-swords/free/Units/<Color> Units/Pawn/
 
 Four colors × four variants = 16 sheets, each 1536×192 (8 frames of 192×192). Parallel load via existing `Promise.all`.
 
-### Variant selector
+### Variant selector — motion by position delta, not state string
+
+The engine state string (`STATE_FORAGING`, `STATE_EXPLORING`, etc.) conflates *action category* with *did the agent move this tick*. `STATE_FORAGING` is set both when gathering in place (stationary) and when stepping toward food (moving). Using state membership in a `MOVING_STATES` set would play the run cycle for motionless foragers — a demo viewer would spot the sprite loping in place.
+
+Motion is derived from position delta instead. The renderer already tracks `prevPositions` per agent for tile interpolation; we reuse that.
 
 ```ts
 type AnimVariant = 'idle' | 'run' | 'idleMeat' | 'runMeat';
-const MOVING_STATES = new Set(['foraging', 'exploring', 'traversing', 'moving']);
 
-function pickVariant(agent: Agent): AnimVariant {
-  const moving = MOVING_STATES.has(agent.state);
+function pickVariant(agent: Agent, prev: {x: number, y: number} | undefined): AnimVariant {
+  const moving = prev !== undefined && (agent.x !== prev.x || agent.y !== prev.y);
   const carrying = agent.cargo > 0;
   if (moving && carrying) return 'runMeat';
   if (moving) return 'run';
@@ -152,7 +174,7 @@ function pickVariant(agent: Agent): AnimVariant {
 }
 ```
 
-"Moving" is interpreted loosely — an agent mid-`forage` action often registers as `STATE_FORAGING` (still), but `STATE_TRAVERSING` (terrain cost mid-crossing) and `STATE_EXPLORING` are the ones that visually advance. The exact state-name mapping will be pinned during implementation by inspecting `backend/app/engine/actions.py` STATE_* constants.
+No state-name mapping, no `MOVING_STATES` set to maintain. Motion is ground truth.
 
 ### Frame cycling
 
@@ -175,9 +197,9 @@ for (const [agentId, anim] of animStates) {
 
 When an agent's variant changes (state or cargo threshold crossed), reset `frameIndex = 0, elapsedMs = 0` so the new animation starts at its first frame instead of mid-cycle.
 
-### Color resolver
+### Palette resolver
 
-`colony.name` already matches the palette (`DEFAULT_COLONY_PALETTE` in `backend/app/services/simulation_service.py` — Red / Blue / Purple / Yellow). Lookup: `atlas.pawns[colony.name]`. If agent's colony is the synthesized default (name `'_default'`, id `None`) — introduced in the Round D legacy-retirement cleanup — fall back to Blue pawn sheets.
+Lookup: `atlas.pawns[colony.sprite_palette] ?? atlas.pawns.Blue`. The new `sprite_palette` field (see §API changes) decouples sprite selection from `colony.name`. Synthesized default colony (`name='_default'`, `id=None`) carries `sprite_palette='Blue'` so the fallback is explicit at the data layer, not implicit in the renderer.
 
 ## HUD additions
 
@@ -185,19 +207,26 @@ When an agent's variant changes (state or cargo threshold crossed), reset `frame
 
 Rendered at `(agent_center_x, agent_y - 18px)` above the sprite, after the sprite draw, before the selection ring. 16-20px canvas text glyph.
 
+Definitive engine state list (grep of `backend/app/engine/actions.py`): `IDLE, RESTING, FORAGING, SOCIALISING, EXPLORING, TRAVERSING, PLANTING, HARVESTING, DEPOSITING, EATING, DEAD`.
+
 ```ts
 const STATE_ICON_MAP: Record<AgentState, string> = {
-  idle: '',             // no glyph when truly idle
+  idle: '',             // truly idle (between decisions) — no glyph
   resting: '💤',
   foraging: '🌾',
-  planting: '🌱',
-  harvesting: '🌾',
   socialising: '💬',
-  eating: '🍖',
   exploring: '·',
   traversing: '…',
+  planting: '🌱',
+  harvesting: '🌾',
+  depositing: '📦',
+  eating: '🍖',
   dead: '☠',
 };
+
+// Guard at draw time — don't call fillText('').
+const glyph = STATE_ICON_MAP[agent.state];
+if (glyph) ctx.fillText(glyph, cx, cy - 18);
 ```
 
 Opacity: 100% during day/dawn/dusk, 40% at night to avoid clutter during the sleep phase.
@@ -207,7 +236,7 @@ Opacity: 100% during day/dawn/dusk, 40% at night to avoid clutter during the sle
 ### Hover tooltip
 
 ```tsx
-<div className="agent-tooltip" style={{ left: screenX + 8, top: screenY + 8 }}>
+<div className="agent-tooltip" style={{ left: clampedX, top: clampedY }}>
   <div className="agent-tooltip__head">
     {agent.name}
     <span className="pill" style={{ background: colony.color }}>{colony.name}</span>
@@ -222,8 +251,13 @@ Opacity: 100% during day/dawn/dusk, 40% at night to avoid clutter during the sle
     <MiniBar label="health" value={agent.health} />
   </div>
   {agent.cargo > 0 && <div className="agent-tooltip__cargo">cargo {agent.cargo.toFixed(1)} / {CARRY_MAX}</div>}
+  {agent.decision_reason && (
+    <div className="agent-tooltip__reason">{agent.decision_reason}</div>
+  )}
 </div>
 ```
+
+The tooltip **surfaces `decision_reason` on its own last line** — hover is where demo viewers look first, so the why-is-this-agent-doing-that info lives there, not only in the click-to-open panel. Styled muted so it doesn't fight with the state pill.
 
 `MiniBar` is a 4-6 char unicode block-char bar (`█████░░░`) or a tiny styled div — decide during implementation.
 
@@ -235,7 +269,18 @@ Opacity: 100% during day/dawn/dusk, 40% at night to avoid clutter during the sle
 - Clears on `pointerleave` (cursor exits canvas) and on `pointerdown` (drag-start takes priority).
 - While drag is active (`dragRef.current` set), tooltip is suppressed.
 
-Viewport clamp: if `screenX + tooltipWidth > window.innerWidth`, render to the left of the cursor instead of right.
+**Viewport clamp — both axes:**
+
+```ts
+const clampedX = screenX + tooltipWidth + 8 > window.innerWidth
+  ? screenX - tooltipWidth - 8   // mirror to left of cursor
+  : screenX + 8;
+const clampedY = screenY + tooltipHeight + 8 > window.innerHeight
+  ? screenY - tooltipHeight - 8  // mirror above cursor
+  : screenY + 8;
+```
+
+Required because a tall tooltip near the bottom edge of the viewport would clip without the Y clamp.
 
 ### Decision-reason readout in `AgentPanel`
 
@@ -264,7 +309,7 @@ Styling: 12px, muted color (`color: var(--text-muted)` or similar), no icon. Hid
 |-----------|--------|
 | `backend/tests/engine/test_agent.py` | Bulk rename: `decide_action(...) == 'rest'` → `decide_action(...).action == 'rest'`. ~11 call sites. Still 22 tests. |
 | `backend/tests/engine/test_decide_action_phase.py` | Same bulk rename. ~9 sites. |
-| `backend/tests/engine/test_decision_reason.py` *(new)* | 15 tests — one per `Decision` branch. Each asserts `decision.action == expected_action` AND `decision.reason == expected_reason`. |
+| `backend/tests/engine/test_decision_reason.py` *(new)* | 15 tests — one per `Decision` branch. Each asserts `decision.action == expected_action` AND a **discriminator substring** is in `decision.reason` (e.g. `'health'`, `'cargo full'`, `'night'`). Exact-string assertions make every wording tweak break 15 tests; the substring check catches wrong-branch-fired without locking phrasing. |
 | `backend/tests/engine/test_tick_agent.py` *(new, or add to test_agent.py)* | 1 test: after `tick_agent(...)`, `agent.last_decision_reason` is non-empty and matches what `decide_action(...).reason` would return for the same state. |
 | `backend/tests/services/test_simulation_service.py` | 1 test: response from `get_current_simulation()`-derived serializer includes `decision_reason` key for every agent dict. |
 
@@ -303,22 +348,23 @@ No frontend test needed for the reason *text* itself — backend owns the string
 
 ## Open questions
 
-1. **State names.** The engine currently uses `STATE_IDLE`, `STATE_RESTING`, `STATE_FORAGING`, `STATE_EXPLORING`, `STATE_PLANTING`, `STATE_HARVESTING`, `STATE_SOCIALISING`, `STATE_EATING`, `STATE_DEAD`, `STATE_TRAVERSING` — the `STATE_ICON_MAP` above mirrors these. Implementation-time check: grep `backend/app/engine/actions.py` for the definitive list.
-2. **Idle-vs-resting distinction for icon.** Both are "not moving" but the current code uses both state strings. Do we show 💤 for both, or only `resting`? Lean: only `resting`, let `idle` show no icon (common default case).
-3. **Colony color fallback in practice.** The Round D synthesized default colony uses `name='_default'`. Is that string guaranteed to never collide with a user-defined colony name? (Current: yes, since demo uses `DEFAULT_COLONY_PALETTE` names only.) Decide at implementation: lock `'_default'` as a reserved sentinel or use `colony.id is None` as the fallback check.
+*(Open questions 1-3 resolved during critical review 2026-04-23 — see diff and §State icon overlay / §Variant selector / §Colony sprite palette decoupling.)*
+
+None remaining.
 
 ## Implementation sequencing (expectation)
 
 The writing-plans skill will decompose this into a task-by-task plan. Rough shape (subject to refinement):
 
 1. Backend: `Decision` dataclass + `decide_action` refactor (all branches) + reason strings.
-2. Backend: `Agent.last_decision_reason` slot + `tick_agent` integration + serializer field.
-3. Backend: tests (per-branch reason test, tick_agent set test, serializer field test).
-4. Frontend: type update + sprite atlas expansion + per-color resolver.
-5. Frontend: animation state + frame cycling + variant picker.
-6. Frontend: state icon overlay.
-7. Frontend: hover tooltip + `AgentTooltip` component + pointer handlers.
-8. Frontend: `AgentPanel` decision-reason readout.
-9. Manual test + demo-ready commit.
+2. Backend: `Agent.last_decision_reason` slot + `tick_agent` integration + `agent_to_dict` field.
+3. Backend: `Colony.sprite_palette` field — model, migration, engine slot, DEFAULT_COLONY_PALETTE extension, mapper, synthesized-default passthrough, `colony_to_dict` field.
+4. Backend: tests (per-branch Decision test with substring assertions, tick_agent sets reason, serializer fields, migration round-trip).
+5. Frontend: type updates (`Agent.decision_reason`, `Colony.sprite_palette`) + sprite atlas expansion (16 sheets) + palette resolver.
+6. Frontend: animation state + frame cycling + position-delta variant picker.
+7. Frontend: state icon overlay (with draw-guard on empty glyph).
+8. Frontend: hover tooltip + `AgentTooltip` component (including decision_reason line + dual-axis viewport clamp) + pointer handlers.
+9. Frontend: `AgentPanel` decision-reason readout.
+10. Manual test + demo-ready commit.
 
-Baseline to preserve: 227 backend + 36 frontend green at every step. New tests raise the counts — final baseline TBD by plan.
+Baseline to preserve: 227 backend + 36 frontend green at every step. New tests raise the counts — final baseline set by the implementation plan.
