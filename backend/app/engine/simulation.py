@@ -3,8 +3,9 @@ import hashlib
 import random
 
 from .agent import Agent, tick_agent
+from .colony import EngineColony
 from .world import World
-from . import cycle
+from . import config, cycle
 
 
 def _sub_seed(master, key):
@@ -48,8 +49,20 @@ class Simulation:
         self.seed = seed
         self.rng_spawn = random.Random(_sub_seed(seed, 'spawn'))
         self.rng_tick = random.Random(_sub_seed(seed, 'tick'))
-        # {colony_id: EngineColony}. Empty dict for legacy sims (pre-colony).
-        self.colonies = {c.id: c for c in (colonies or [])}
+        if colonies:
+            self.colonies = {c.id: c for c in colonies}
+        else:
+            # Synthesize a default colony for callers that don't supply one
+            # (the agent_count= convenience overload in new_simulation, direct
+            # Simulation() in unit tests). Keys on None so agents constructed
+            # without an explicit colony_id (Agent default == None) match the
+            # colony lookup in tick_agent. Lets the engine run a single,
+            # colony-aware tick path instead of branching on legacy shape.
+            default = EngineColony(id=None, name='_default', color='#000',
+                                   camp_x=0, camp_y=0,
+                                   food_stock=config.INITIAL_FOOD_STOCK,
+                                   growing_count=0)
+            self.colonies = {None: default}
 
     def snapshot_rng_state(self):
         """JSON-safe snapshot of both sub-stream RNGs for persistence."""

@@ -1,5 +1,5 @@
 """Runtime Agent and per-tick driver. Pure Python — no Flask, no DB imports."""
-from . import actions, needs
+from . import actions, config, needs
 
 
 class Agent:
@@ -54,7 +54,7 @@ class Agent:
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
 
 
-def decide_action(agent, world=None, colony=None, phase=None):
+def decide_action(agent, world, colony, phase):
     """Return the name of the action this agent should take this tick.
 
     Philosophy: agents live in the world, not at camp. The only reasons
@@ -73,20 +73,7 @@ def decide_action(agent, world=None, colony=None, phase=None):
       5. Rogue eat-from-pouch at hunger < MODERATE (they can't eat at camp).
       6. Tile-local productivity (harvest / plant).
       7. Tail: forage → explore.
-
-    Legacy single-arg callers (pre-cultivation sims, audit scripts) hit
-    the `colony is None` path and get the classic chain. This preserves
-    backwards compat while T11/T12 finish wiring phase + colony through.
     """
-    from . import config
-
-    if colony is None:
-        return _legacy_decide_action(agent)
-    if world is None:
-        # Defensive guard: new path requires world. Fall back to legacy
-        # chain rather than NPE-ing on world.get_tile in the 'day' branch.
-        return _legacy_decide_action(agent)
-
     # Survival takes precedence over any phase behavior.
     if agent.health < needs.HEALTH_CRITICAL:
         return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
