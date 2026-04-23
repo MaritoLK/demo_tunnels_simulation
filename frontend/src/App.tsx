@@ -179,7 +179,7 @@ export function App() {
           <div className="hud__tick">
             <span className="hud__tick-label">Tick</span>
             <span className={`hud__tick-value ${tickPulse ? 'hud__tick-value--pulse' : ''}`}>
-              {sim.data ? fmtNum(sim.data.tick) : '—'}
+              {sim.data ? sim.data.tick.toLocaleString('en-US') : '—'}
             </span>
           </div>
 
@@ -245,12 +245,6 @@ function getSimStatus(sim: { isLoading: boolean; error: unknown; data: unknown }
     return 'error';
   }
   return 'ok';
-}
-
-const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
-
-function fmtNum(n: number): string {
-  return NUMBER_FORMATTER.format(n);
 }
 
 function LabeledNumber({
