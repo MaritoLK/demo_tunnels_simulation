@@ -68,7 +68,6 @@ class World:
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        self.tiles = []
 
     def generate(self, seed=None):
         rng = random.Random(seed)
