@@ -33,6 +33,7 @@ import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
 import { isReducedMotion } from '../state/reducedMotion';
 import { useViewStore } from '../state/viewStore';
+import { AgentTooltip } from './AgentTooltip';
 
 // Source sprites are 64×64, so BASE_TILE_PX=64 means zoom=1.0 renders
 // at native resolution (no scaling, sharpest result). The zoom floor
@@ -383,21 +384,12 @@ export function WorldCanvas() {
       />
       {status && <div className="overlay">{status}</div>}
       {hover && (
-        <div
-          style={{
-            position: 'fixed',
-            left: hover.screenX + 8,
-            top: hover.screenY + 8,
-            padding: '4px 8px',
-            background: '#111',
-            color: '#fff',
-            fontSize: 12,
-            pointerEvents: 'none',
-            zIndex: 20,
-          }}
-        >
-          {hover.agent.name} — {hover.agent.state}
-        </div>
+        <AgentTooltip
+          agent={hover.agent}
+          colony={hover.colony}
+          screenX={hover.screenX}
+          screenY={hover.screenY}
+        />
       )}
     </div>
   );
