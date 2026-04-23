@@ -114,7 +114,15 @@ Previously proposed: look up pawn sprite sheets by `colony.name`. **Rejected** �
 
 Touches:
 - `backend/app/models/colony.py` — new column `sprite_palette VARCHAR(16) NOT NULL DEFAULT 'Blue'`.
-- `backend/migrations/versions/<hash>_colony_sprite_palette.py` — add column with `server_default='Blue'`, backfill existing rows from name-match where possible.
+- `backend/migrations/versions/<hash>_colony_sprite_palette.py` — add column with `server_default='Blue'`, backfill explicitly:
+  ```sql
+  UPDATE colonies
+     SET sprite_palette = name
+   WHERE name IN ('Red', 'Blue', 'Purple', 'Yellow');
+  -- rows with any other name keep the 'Blue' server_default. No demo
+  -- data hits this branch today; the explicit IN list prevents future
+  -- non-palette colonies from silently becoming Blue without notice.
+  ```
 - `backend/app/engine/colony.py` — `EngineColony.__slots__` gains `'sprite_palette'`.
 - `backend/app/services/simulation_service.py::DEFAULT_COLONY_PALETTE` — extend each tuple to `(name, color, sprite_palette)`. For the 4 demo colonies, `sprite_palette` matches `name` at creation time; post-rename they diverge cleanly.
 - `backend/app/services/simulation_service.py::_build_default_colonies` — pass sprite_palette to `EngineColony(...)`.
@@ -136,7 +144,7 @@ No new routes. One new migration.
 | `frontend/src/components/WorldCanvas.tsx` | `onPointerMove` handler (non-drag, throttled via ref timestamp); pixel-to-tile-to-agent lookup; local `useState<HoverState \| null>` for tooltip; clear on `pointerleave` and `pointerdown`. |
 | `frontend/src/components/AgentTooltip.tsx` *(new)* | `position: fixed` div, viewport-clamped, renders name / colored colony pill / state icon + label / mini-bars / cargo line. |
 | `frontend/src/components/AgentPanel.tsx` | Replace bare state pill with state pill + `<div className="decision-reason">{agent.decision_reason}</div>`. Hide reason line when empty string. |
-| `frontend/src/api/types.ts` | `Agent.decision_reason: string`. |
+| `frontend/src/api/types.ts` | `Agent.decision_reason: string`; `Colony.sprite_palette: string`. |
 | `frontend/src/styles.css` | `.agent-tooltip { … }`, `.decision-reason { … }`. |
 
 Zero Zustand additions — hover state is ephemeral, lives in the canvas component only.
