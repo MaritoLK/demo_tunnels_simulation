@@ -199,8 +199,7 @@ def forage(agent, world, *, rng):
     # full. A sated agent with empty cargo still forages (stockpiling
     # for the colony), and a hungry agent with a full pouch still
     # forages (the gather action feeds their own hunger regardless).
-    cargo = getattr(agent, 'cargo', 0.0)
-    if agent.hunger >= needs.NEED_MAX and cargo >= needs.CARRY_MAX:
+    if agent.hunger >= needs.NEED_MAX and agent.cargo >= needs.CARRY_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
@@ -208,10 +207,10 @@ def forage(agent, world, *, rng):
         # nowhere to put surplus can't drain a tile for nothing. This
         # is the food-scarcity invariant: tile units only leave the
         # world through a pouch slot or a mouth.
-        pouch_room = needs.CARRY_MAX - cargo
+        pouch_room = needs.CARRY_MAX - agent.cargo
         taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount, pouch_room)
         tile.resource_amount -= taken
-        agent.cargo = cargo + taken
+        agent.cargo += taken
         # Hunger fills regardless — the gather action doubles as eating
         # on the spot. The FORAGE_HUNGER_RESTORE constant is independent
         # of `taken` so a tile-starved forage still feeds the agent
@@ -438,12 +437,11 @@ def deposit_cargo(agent, colony):
     whole cargo value, agent.cargo resets to 0, emits 'deposited' with
     the amount so the UI can flash the feedback.
     """
-    cargo = getattr(agent, 'cargo', 0.0)
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
-    if cargo <= 0:
+    if agent.cargo <= 0:
         return {'type': 'idled', 'description': f'{agent.name} has nothing to deposit'}
-    amount = cargo
+    amount = agent.cargo
     colony.food_stock += amount
     agent.cargo = 0.0
     agent.state = STATE_DEPOSITING
@@ -475,13 +473,12 @@ def eat_cargo(agent):
     meal. Caller (decide_action rogue branch) already gates on
     HUNGER_MODERATE, so the strict-less-than guard here is defensive.
     """
-    cargo = getattr(agent, 'cargo', 0.0)
-    if cargo <= 0:
+    if agent.cargo <= 0:
         return {'type': 'idled', 'description': f'{agent.name} had nothing in their pouch'}
     if agent.hunger >= needs.NEED_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
-    taken = min(1.0, cargo)
-    agent.cargo = cargo - taken
+    taken = min(1.0, agent.cargo)
+    agent.cargo -= taken
     agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
     agent.state = STATE_EATING
     return {

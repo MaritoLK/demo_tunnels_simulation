@@ -82,9 +82,7 @@ def decide_action(agent, world, colony, phase):
     if agent.energy < needs.ENERGY_CRITICAL:
         return 'rest'
 
-    rogue = getattr(agent, 'rogue', False)
-    cargo = getattr(agent, 'cargo', 0.0)
-    at_camp = colony.is_at_camp(agent.x, agent.y) if not rogue else False
+    at_camp = colony.is_at_camp(agent.x, agent.y) if not agent.rogue else False
 
     # Night: everybody sleeps where they stand. No forced march home.
     # rest_outdoors recovers energy at half-rate, which keeps a natural
@@ -98,7 +96,7 @@ def decide_action(agent, world, colony, phase):
     # spend the tick usefully before leaving again. Deposit first, eat
     # at dawn if hungry, socialise if social is the reason they came.
     if at_camp:
-        if cargo > 0:
+        if agent.cargo > 0:
             return 'deposit'
         if (phase == 'dawn'
                 and agent.hunger < needs.NEED_MAX
@@ -112,7 +110,7 @@ def decide_action(agent, world, colony, phase):
     # socialise() only refills on the camp tile with a colony-mate, so
     # this branch is what keeps social→0→rogue from being inevitable.
     # Rogue agents skip — their social will keep sliding, nothing to do.
-    if not rogue and agent.social < needs.SOCIAL_LOW:
+    if not agent.rogue and agent.social < needs.SOCIAL_LOW:
         return 'step_to_camp'
 
     # Full pouch — non-rogue can't forage any more and should offload.
@@ -121,7 +119,7 @@ def decide_action(agent, world, colony, phase):
     # value sits stranded until social or dawn eventually pulls them home.
     # Rogues have no camp so this rule doesn't apply to them — they'll
     # spend cargo via eat_cargo further down the chain.
-    if not rogue and cargo >= needs.CARRY_MAX:
+    if not agent.rogue and agent.cargo >= needs.CARRY_MAX:
         return 'step_to_camp'
 
     tile = world.get_tile(agent.x, agent.y)
@@ -135,7 +133,7 @@ def decide_action(agent, world, colony, phase):
     # Rogue eat-from-pouch: no camp → cargo is their larder. Trigger at
     # HUNGER_MODERATE so they top up before starvation, and gate on
     # cargo > 0 to avoid firing a sham eat with nothing in the pouch.
-    if rogue and cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
+    if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
         return 'eat_cargo'
 
     if agent.hunger < needs.HUNGER_MODERATE:

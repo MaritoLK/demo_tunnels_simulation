@@ -25,11 +25,9 @@ def agent_to_dict(agent):
         'age': agent.age,
         'alive': agent.alive,
         'colony_id': agent.colony_id,
-        # Rogue is transient (not in Agent DB schema); getattr keeps
-        # legacy ORM-agent serializer calls (pre-slot) from NPE'ing.
-        'rogue': getattr(agent, 'rogue', False),
-        'loner': getattr(agent, 'loner', False),
-        'cargo': getattr(agent, 'cargo', 0.0),
+        'rogue': agent.rogue,
+        'loner': agent.loner,
+        'cargo': agent.cargo,
     }
 
 
