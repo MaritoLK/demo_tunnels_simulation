@@ -48,6 +48,13 @@ All bugs documented here are fixed in the engine. Scripts moved from
 `backend/audit/` to `docs/audit/` on 2026-04-23 to make the boundary
 between production code and post-mortem documentation explicit.
 
+After the 2026-04-23 cleanup, several scripts call engine APIs in their
+**pre-cleanup signatures** (e.g. `tick_agent(agent, world, [agent], rng=…)`
+without `colonies_by_id` / `phase`). They are kept in their original form
+as historical fidelity to the bug they describe; a `TypeError` on direct
+execution against post-cleanup engine code is expected. Read them as
+narrative, not as runnable repros.
+
 If you add a new repro: name it `bugN_<slug>.py`, follow the existing
 docstring format (problem statement → pre-fix vs post-fix behavior →
 test setup), and add a row to the table above.
