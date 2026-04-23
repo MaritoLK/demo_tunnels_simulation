@@ -66,95 +66,81 @@ class Agent:
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
 
 
-def decide_action(agent, world, colony, phase):
-    """Return the name of the action this agent should take this tick.
+def decide_action(agent, world, colony, phase) -> Decision:
+    """Return the Decision (action-name + reason) for this agent this tick.
 
-    Philosophy: agents live in the world, not at camp. The only reasons
-    a non-rogue returns home are (a) social need hit SOCIAL_LOW (only
-    camp socialise refills it) or (b) a dawn opportunistic eat_camp
-    when they happen to already be there. Everything else — foraging,
-    harvesting, planting, exploring — happens in the field. Previously
-    the dusk/night phases forced a march home where agents sat resting
-    for ~60 ticks doing nothing; the demo reads flatter than it should.
+    Priority ladder (first match wins):
+      1. Survival (health / hunger / energy crits).
+      2. Night → rest_outdoors in place.
+      3. At-camp opportunistic (deposit / eat / socialise).
+      4. Social-low off-camp → step_to_camp.
+      5. Cargo-full off-camp → step_to_camp.
+      6. Tile-local (harvest / plant).
+      7. Rogue eat-from-pouch.
+      8. Tail (forage / explore).
 
-    Order of precedence:
-      1. Survival (health/hunger/energy crit) — always applies.
-      2. Night: rest_outdoors in place (no travel home).
-      3. At-camp opportunistic: drop cargo, eat at dawn if hungry.
-      4. Social-low (non-rogue) → step_to_camp (the only forced return).
-      5. Rogue eat-from-pouch at hunger < MODERATE (they can't eat at camp).
-      6. Tile-local productivity (harvest / plant).
-      7. Tail: forage → explore.
+    Every branch returns one Decision literal so action + reason cannot
+    drift. See CLAUDE.md §Design principles.
     """
-    # Survival takes precedence over any phase behavior.
+    hc = int(needs.HEALTH_CRITICAL)
+    ec = int(needs.ENERGY_CRITICAL)
+    hu_c = int(needs.HUNGER_CRITICAL)
+    hu_m = int(needs.HUNGER_MODERATE)
+    sl = int(needs.SOCIAL_LOW)
+
+    # 1. Survival
     if agent.health < needs.HEALTH_CRITICAL:
-        return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
+        if agent.energy < needs.ENERGY_CRITICAL:
+            return Decision('rest', f'health < {hc}, energy < {ec} → rest')
+        return Decision('forage', f'health < {hc} → forage to recover')
     if agent.hunger < needs.HUNGER_CRITICAL:
-        return 'forage'
+        return Decision('forage', f'hunger < {hu_c} → forage now')
     if agent.energy < needs.ENERGY_CRITICAL:
-        return 'rest'
+        return Decision('rest', f'energy < {ec} → rest')
 
     at_camp = colony.is_at_camp(agent.x, agent.y) if not agent.rogue else False
 
-    # Night: everybody sleeps where they stand. No forced march home.
-    # rest_outdoors recovers energy at half-rate, which keeps a natural
-    # cost for being caught in the field — but the agent still acts,
-    # doesn't trigger the old "traipse home, then rest 60 ticks" loop.
+    # 2. Night
     if phase == 'night':
-        return 'rest_outdoors'
+        return Decision('rest_outdoors', 'night phase → rest in place')
 
-    # At-camp opportunistic actions: if the agent happens to already be
-    # on their camp tile (typically because social pulled them home),
-    # spend the tick usefully before leaving again. Deposit first, eat
-    # at dawn if hungry, socialise if social is the reason they came.
+    # 3. At-camp opportunistic
     if at_camp:
         if agent.cargo > 0:
-            return 'deposit'
+            return Decision('deposit', f'at camp, cargo {agent.cargo:.1f} → deposit')
         if (phase == 'dawn'
                 and agent.hunger < needs.NEED_MAX
                 and colony.food_stock >= config.EAT_COST
                 and not agent.ate_this_dawn):
-            return 'eat_camp'
+            return Decision('eat_camp', 'dawn at camp → eat stock')
         if agent.social < needs.SOCIAL_LOW:
-            return 'socialise'
+            return Decision('socialise', f'at camp, social < {sl} → socialise')
 
-    # Social pressure — the only forced return home for a non-rogue.
-    # socialise() only refills on the camp tile with a colony-mate, so
-    # this branch is what keeps social→0→rogue from being inevitable.
-    # Rogue agents skip — their social will keep sliding, nothing to do.
+    # 4. Social-low off-camp
     if not agent.rogue and agent.social < needs.SOCIAL_LOW:
-        return 'step_to_camp'
+        return Decision('step_to_camp', f'social < {sl} → head to camp')
 
-    # Full pouch — non-rogue can't forage any more and should offload.
-    # Without this branch a colonist who fills their cargo mid-field just
-    # wanders planting/exploring with no way to contribute; their pouch
-    # value sits stranded until social or dawn eventually pulls them home.
-    # Rogues have no camp so this rule doesn't apply to them — they'll
-    # spend cargo via eat_cargo further down the chain.
+    # 5. Cargo-full off-camp
     if not agent.rogue and agent.cargo >= needs.CARRY_MAX:
-        return 'step_to_camp'
+        return Decision('step_to_camp', 'cargo full → head to camp')
 
+    # 6. Tile-local
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state == 'mature':
-        return 'harvest'
+        return Decision('harvest', 'mature crop → harvest')
     if (tile.crop_state == 'none'
             and tile.resource_amount == 0
             and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
-        return 'plant'
+        return Decision('plant', 'empty tile → plant')
 
-    # Rogue eat-from-pouch: no camp → cargo is their larder. Trigger at
-    # HUNGER_MODERATE so they top up before starvation, and gate on
-    # cargo > 0 to avoid firing a sham eat with nothing in the pouch.
+    # 7. Rogue eat-from-pouch
     if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
-        return 'eat_cargo'
+        return Decision('eat_cargo', f'rogue, hunger < {hu_m} → eat from pouch')
 
+    # 8. Tail
     if agent.hunger < needs.HUNGER_MODERATE:
-        return 'forage'
-    # No social branch here: at-camp socialise is handled in the at_camp
-    # block above, and off-camp social-low already returned
-    # 'step_to_camp' earlier. Falling through means social is comfortable
-    # (or the agent is rogue, whose social floor is permanent).
-    return 'explore'
+        return Decision('forage', f'hunger < {hu_m} → forage')
+    return Decision('explore', 'all needs ok → explore')
 
 
 def execute_action(action_name, agent, world, all_agents, colony, *, rng):
@@ -242,8 +228,8 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
             f"Agent {agent.id!r} has colony_id={agent.colony_id!r} "
             f"not in colonies_by_id {list(colonies_by_id)!r}"
         )
-    action_name = decide_action(agent, world, colony, phase)
-    events.append(execute_action(action_name, agent, world, all_agents, colony, rng=rng))
+    decision = decide_action(agent, world, colony, phase)
+    events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
 
     agent.age += 1
     return events

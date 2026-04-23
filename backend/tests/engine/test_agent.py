@@ -93,7 +93,7 @@ def test_decide_action_critical_health_low_energy_picks_rest():
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL - 1
     a.energy = needs.ENERGY_CRITICAL - 1
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'rest'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'rest'
 
 
 def test_decide_action_critical_health_ok_energy_picks_forage():
@@ -101,27 +101,27 @@ def test_decide_action_critical_health_ok_energy_picks_forage():
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL - 1
     a.energy = needs.NEED_MAX
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_critical_hunger_picks_forage():
     a = _healthy_agent()
     a.hunger = needs.HUNGER_CRITICAL - 1
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_critical_energy_picks_rest_when_hunger_ok():
     # Health + hunger ok → energy drives the decision.
     a = _healthy_agent()
     a.energy = needs.ENERGY_CRITICAL - 1
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'rest'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'rest'
 
 
 def test_decide_action_moderate_hunger_picks_forage():
     # Hunger between CRITICAL and MODERATE → forage early, don't wait for crisis.
     a = _healthy_agent()
     a.hunger = needs.HUNGER_MODERATE - 1
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_low_social_picks_socialise():
@@ -133,12 +133,12 @@ def test_decide_action_low_social_picks_socialise():
     a.social = needs.SOCIAL_LOW - 1
     camp_colony = EngineColony(id=1, name='Camp', color='#000', camp_x=0, camp_y=0,
                                 food_stock=18, growing_count=config.MAX_FIELDS_PER_COLONY)
-    assert decide_action(a, _grass_world(), camp_colony, 'day') == 'socialise'
+    assert decide_action(a, _grass_world(), camp_colony, 'day').action == 'socialise'
 
 
 def test_decide_action_all_ok_picks_explore():
     a = _healthy_agent()
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 # Boundary tests — the ladder uses strict `<`, so exact-threshold values
@@ -150,27 +150,27 @@ def test_decide_action_hunger_at_critical_threshold_does_not_pick_forage_yet():
     a = _healthy_agent()
     a.hunger = needs.HUNGER_CRITICAL
     # Still moderate because HUNGER_CRITICAL (20) < HUNGER_MODERATE (50).
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_hunger_at_moderate_threshold_skips_forage():
     # hunger == HUNGER_MODERATE → not strictly less than, falls past forage.
     a = _healthy_agent()
     a.hunger = needs.HUNGER_MODERATE
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 def test_decide_action_social_at_low_threshold_skips_socialise():
     a = _healthy_agent()
     a.social = needs.SOCIAL_LOW
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 def test_decide_action_health_at_critical_threshold_skips_emergency():
     # Exactly HEALTH_CRITICAL → emergency branch does not trigger.
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL
-    assert decide_action(a, _grass_world(), _colony(), 'day') == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 # Health recovery — fixes the "zombie" bug where health only ever decays.
