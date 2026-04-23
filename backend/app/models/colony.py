@@ -12,3 +12,5 @@ class Colony(db.Model):
     food_stock = db.Column(
         db.Float, nullable=False, default=0.0, server_default='0',
     )
+    sprite_palette = db.Column(db.String(16), nullable=False,
+                               default='Blue', server_default='Blue')
