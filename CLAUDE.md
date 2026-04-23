@@ -27,6 +27,6 @@ Primary learning record. Every non-trivial decision lands a §-numbered entry.
 Update as we build, not retroactively.
 
 ## Scope
-Interview demo at BUUK Infrastructure 2026-04-17. Colony sim.
-Python/Flask backend, React frontend, PostgreSQL. Single-worker deployment.
-Pre-demo window prioritizes demo-critical bugs over polish.
+Colony sim for BUUK Infrastructure interview. Initial demo shipped 2026-04-17;
+re-demo scheduled 2026-04-28. Python/Flask backend, React frontend, PostgreSQL.
+Single-worker deployment. Pre-demo window prioritizes cleanup over new features.
