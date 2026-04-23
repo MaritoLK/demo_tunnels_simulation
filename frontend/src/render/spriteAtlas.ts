@@ -119,14 +119,20 @@ export const HOUSE_FRAME_H = 192;
 
 export async function loadSprites(): Promise<SpriteAtlas> {
   // Promise.all so all image loads run in parallel — first paint
-  // is gated on the slowest, not the sum.
-  const loadPair = (urls: Record<PawnVariant, string>) =>
-    Promise.all([
+  // is gated on the slowest, not the sum. loadPair returns a named
+  // record (not a positional array) so a future field reorder can't
+  // silently swap idle ↔ run via array-index drift.
+  const loadPair = async (
+    urls: Record<PawnVariant, string>,
+  ): Promise<Record<PawnVariant, HTMLImageElement>> => {
+    const [idle, run, idleMeat, runMeat] = await Promise.all([
       loadImage(urls.idle),
       loadImage(urls.run),
       loadImage(urls.idleMeat),
       loadImage(urls.runMeat),
     ]);
+    return { idle, run, idleMeat, runMeat };
+  };
 
   const [
     tilemap, water, meat, bush, rock,
@@ -148,18 +154,15 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     loadImage(houseYellowUrl),
   ]);
 
-  const packPawns = (arr: HTMLImageElement[]): Record<PawnVariant, HTMLImageElement> => ({
-    idle: arr[0], run: arr[1], idleMeat: arr[2], runMeat: arr[3],
-  });
-
   return {
     tilemap, water, meat, bush, rock,
-    pawn: bluePawns[0],   // legacy single-pawn field = Blue idle (unchanged behavior)
+    // legacy single-pawn field = Blue idle (Task 11 retires this)
+    pawn: bluePawns.idle,
     pawns: {
-      Red:    packPawns(redPawns),
-      Blue:   packPawns(bluePawns),
-      Purple: packPawns(purplePawns),
-      Yellow: packPawns(yellowPawns),
+      Red: redPawns,
+      Blue: bluePawns,
+      Purple: purplePawns,
+      Yellow: yellowPawns,
     },
     houses: {
       Red: houseRed,
