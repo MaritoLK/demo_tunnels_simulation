@@ -84,7 +84,7 @@ def replace_simulation():
     this wipes and rebuilds the singleton. See §9.21.
 
     Two mutually-exclusive calling shapes:
-      * Legacy: `agent_count=N` (pre-cultivation, no colony system).
+      * Random spawn: `agent_count=N` (default colony, random tiles).
       * Colonies: `colonies=K, agents_per_colony=M` (4-colony demo layout).
     """
     body = request.get_json(silent=True)

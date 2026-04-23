@@ -130,17 +130,17 @@ def _build_default_colonies(width, height, n_colonies):
 
 def create_simulation(width, height, seed=None, agent_count=0,
                       colonies=0, agents_per_colony=None):
-    """Create a fresh sim. Two calling paths:
-      * Legacy:   agent_count=N (pre-cultivation, no colony system).
-      * Colonies: colonies=K + agents_per_colony=M (default demo path).
-    Default kwargs keep every existing caller on the legacy path; T22
-    wires the route to opt in explicitly.
+    """Create a fresh sim. Two calling shapes:
+      * Random spawn: agent_count=N — drops N agents on random walkable
+        tiles under a synthesized default colony. Test-friendly shorthand.
+      * Colonies: colonies=K + agents_per_colony=M — explicit camp layout
+        (default demo path).
     """
     global _current_sim
 
     # Colony kwargs travel as a pair. Half-set previously fell silently to
-    # the legacy branch after already flushing Colony rows — loud at the
-    # seam instead (mirrors the engine-layer guard in new_simulation).
+    # the random-spawn branch after already flushing Colony rows — loud at
+    # the seam instead (mirrors the engine-layer guard in new_simulation).
     if bool(colonies) != (agents_per_colony is not None):
         raise ValueError(
             'colonies and agents_per_colony must be passed together; '

@@ -291,18 +291,14 @@ def rest_outdoors(agent):
     }
 
 
-def socialise(agent, agents, *, colony=None):
+def socialise(agent, agents, *, colony):
     """Refill social only when BOTH participants are on the colony's camp tile.
 
     Rationale (§day-night extension): socialising is a "home fire" ritual,
     not a chance encounter in the field. Social need only tops up when an
     agent returns to camp and finds a colony-mate there too. This forces
     a return loop: long expeditions let social decay → agent must come
-    back → if too late, they go rogue.
-
-    `colony` defaults to None for legacy callers (pre-camp tests). In
-    that path we preserve the old unconditional refill so older tests
-    keep passing."""
+    back → if too late, they go rogue."""
     # Honest-action guard: full social → no-op. Emits before the partner
     # lookup so we don't fire a sham 'passed in the field' event either.
     if agent.social >= needs.NEED_MAX:
@@ -311,15 +307,14 @@ def socialise(agent, agents, *, colony=None):
     if other is None:
         return {'type': 'idled', 'description': f'{agent.name} found no one to socialise with'}
 
-    if colony is not None:
-        at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
-        if not at_camp:
-            # Neighbours met in the field — no social refill. Still emits
-            # an event so the tick log shows the encounter.
-            return {
-                'type': 'idled',
-                'description': f'{agent.name} passed {other.name} in the field',
-            }
+    at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
+    if not at_camp:
+        # Neighbours met in the field — no social refill. Still emits
+        # an event so the tick log shows the encounter.
+        return {
+            'type': 'idled',
+            'description': f'{agent.name} passed {other.name} in the field',
+        }
 
     agent.social = min(needs.NEED_MAX, agent.social + needs.SOCIALISE_SOCIAL_RESTORE)
     other.social = min(needs.NEED_MAX, other.social + needs.SOCIALISE_SOCIAL_RESTORE)
