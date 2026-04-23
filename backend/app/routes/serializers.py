@@ -57,6 +57,7 @@ def colony_to_dict(colony):
         'camp_y': colony.camp_y,
         'food_stock': colony.food_stock,
         'growing_count': colony.growing_count,
+        'sprite_palette': colony.sprite_palette,
     }
 
 

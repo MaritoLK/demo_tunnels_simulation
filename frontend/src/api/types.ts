@@ -63,6 +63,10 @@ export interface Colony {
   camp_y: number;
   food_stock: number;
   growing_count: number;
+  // Sprite-asset key — decouples agent sprite selection from colony.name
+  // so a future colony rename doesn't lose its visual identity.
+  // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).
+  sprite_palette: string;
 }
 
 export interface SimulationSummary {

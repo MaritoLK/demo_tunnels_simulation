@@ -183,7 +183,7 @@ describe('Canvas2DRenderer — colony decorations', () => {
     r.resize(32, 32);
     r.drawFrame(makeSnap({
       colonies: [
-        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0 },
+        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0, sprite_palette: 'Red' },
       ],
     }));
     expect(ctxSpy.strokeRect).toHaveBeenCalledTimes(1);

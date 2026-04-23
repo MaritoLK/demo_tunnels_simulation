@@ -135,6 +135,33 @@ def test_build_default_colonies_assigns_palette_per_position():
     assert [c.name for c in colonies] == palettes
 
 
+def test_colony_mapper_round_trip_preserves_sprite_palette(db_session):
+    """EngineColony → row → EngineColony keeps sprite_palette intact."""
+    from app.services import mappers
+    from app.engine.colony import EngineColony
+
+    c = EngineColony(id=None, name='Red', color='#e74c3c',
+                     camp_x=3, camp_y=3, food_stock=18,
+                     sprite_palette='Red')
+    row = mappers.colony_to_row(c)
+    db_session.add(row)
+    db_session.flush()
+    restored = mappers.row_to_colony(row)
+    assert restored.sprite_palette == 'Red'
+    assert restored.name == 'Red'
+
+
+def test_colony_to_dict_emits_sprite_palette():
+    from app.engine.colony import EngineColony
+    from app.routes.serializers import colony_to_dict
+
+    c = EngineColony(id=1, name='Purple', color='#9b59b6',
+                     camp_x=0, camp_y=0, food_stock=10,
+                     sprite_palette='Purple')
+    dumped = colony_to_dict(c)
+    assert dumped['sprite_palette'] == 'Purple'
+
+
 def test_synthesized_default_colony_sprite_palette_is_blue():
     """Simulation.__init__ with colonies=None synthesizes a default colony
     whose sprite_palette resolves to 'Blue' — the renderer's fallback

@@ -138,6 +138,7 @@ def colony_to_row(c):
         camp_x=c.camp_x,
         camp_y=c.camp_y,
         food_stock=c.food_stock,
+        sprite_palette=c.sprite_palette,
     )
 
 
@@ -150,6 +151,7 @@ def row_to_colony(row):
         camp_x=row.camp_x,
         camp_y=row.camp_y,
         food_stock=row.food_stock,
+        sprite_palette=row.sprite_palette,
     )
 
 
