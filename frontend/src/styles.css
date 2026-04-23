@@ -1081,3 +1081,10 @@ body::after {
   font-size: 11px;
   opacity: 0.75;
 }
+
+.decision-reason {
+  margin-top: 3px;
+  font-size: 11px;
+  color: rgba(230, 232, 236, 0.6);
+  line-height: 1.3;
+}
