@@ -28,11 +28,21 @@ import {
   HOUSE_FRAME_H,
   HOUSE_FRAME_W,
   loadSprites,
+  PAWN_FRAME_PX,
   SOURCE_TILE_PX,
   TERRAIN_DECORATION,
   TERRAIN_TILE,
+  type ColonyPalette,
+  type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
+import { FRAME_MS, FRAMES_PER_CYCLE } from './animConfig';
+
+interface AnimState {
+  variant: PawnVariant;
+  frameIndex: number;
+  elapsedMs: number;
+}
 
 // Vivid WorldBox-inspired biome palette. Saturated, playful, reads as
 // "sandbox world" not "scientific map." The canvas is the hero — chrome
@@ -89,6 +99,24 @@ const STATE_LABEL: Record<string, { text: string; color: string }> = {
 // appear/disappear at the same zoom level.
 const LABEL_MIN_TILE_PX = 14;
 
+/**
+ * Pick the pawn animation variant for `agent`. Motion comes from
+ * position delta (not state string) — the engine's STATE_FORAGING
+ * is set both when gathering in place AND when stepping toward food,
+ * so a state-based motion check would lope motionless foragers.
+ */
+export function pickVariant(
+  agent: { state: string; cargo?: number; x: number; y: number },
+  prev: { x: number; y: number } | undefined,
+): PawnVariant {
+  const moving = prev !== undefined && (agent.x !== prev.x || agent.y !== prev.y);
+  const carrying = (agent.cargo ?? 0) > 0;
+  if (moving && carrying) return 'runMeat';
+  if (moving) return 'run';
+  if (carrying) return 'idleMeat';
+  return 'idle';
+}
+
 export class Canvas2DRenderer implements Renderer {
   private host: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -123,6 +151,12 @@ export class Canvas2DRenderer implements Renderer {
   private lastSeenTick = -1;
   private lastTickBoundaryAt = 0;
   private pollIntervalMs = 500;
+  // Per-agent animation state — lazily created on first sight.
+  // Swept at end of each draw so departed/dead agents don't accumulate.
+  private animStates: Map<number, AnimState> = new Map();
+  // Wall-clock time of the previous drawFrame call — used to compute dt
+  // for frame-cycling. 0 on first frame (dt = 0, no advance).
+  private lastFrameAt = 0;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -217,6 +251,32 @@ export class Canvas2DRenderer implements Renderer {
     }
 
     const alpha = Math.max(0, Math.min(1, (now - this.lastTickBoundaryAt) / this.pollIntervalMs));
+
+    // Frame-cycling: compute dt from wall-clock delta between drawFrame calls.
+    // dt = 0 on the very first frame (lastFrameAt = 0) so no phantom advance.
+    const dt = this.lastFrameAt > 0 ? now - this.lastFrameAt : 0;
+    this.lastFrameAt = now;
+
+    // Per-agent anim state — pick variant + advance frameIndex at 10 fps.
+    // Must run before the agent draw loop (below) which reads animStates.
+    for (const agent of agents) {
+      if (!agent.alive) continue;
+      const prev = this.prevPositions.get(agent.id);
+      const wantVariant = pickVariant(agent, prev);
+
+      let anim = this.animStates.get(agent.id);
+      if (!anim || anim.variant !== wantVariant) {
+        // New agent or variant change: reset to frame 0.
+        anim = { variant: wantVariant, frameIndex: 0, elapsedMs: 0 };
+        this.animStates.set(agent.id, anim);
+      } else {
+        anim.elapsedMs += dt;
+        while (anim.elapsedMs >= FRAME_MS) {
+          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_CYCLE;
+          anim.elapsedMs -= FRAME_MS;
+        }
+      }
+    }
 
     ctx.save();
     // Background clear — match the shell ground so the canvas feels
@@ -469,15 +529,26 @@ export class Canvas2DRenderer implements Renderer {
       }
 
       if (sprites) {
-        // Tight crop on the pawn body inside the 192×192 frame. The
-        // body lives at roughly (46, 30)–(146, 160) in source pixels —
-        // the rest is animation-slack padding (head-bob + tool sweep
-        // room). Drawing the whole frame at 1.5×tile scaled the body
-        // down to 50% of the tile (visually invisible at fit-zoom).
-        // Render the tight crop at native aspect: 1 tile wide × 1.3
-        // tiles tall, foot anchored at tile bottom so only the head
-        // overshoots upward.
-        const srcX = 46, srcY = 30, srcW = 100, srcH = 130;
+        // Palette-aware per-variant per-frame pawn draw.
+        // Each pawn sheet is 1536×192 = 8 frames of PAWN_FRAME_PX×PAWN_FRAME_PX.
+        // The anim state was set for alive agents in the frame-cycling block above.
+        // Dead agents skip the anim state (not alive → not in animStates) so
+        // fall back to Blue idle sheet at frame 0.
+        //
+        // Tight crop: body lives at roughly (46,30)–(146,160) in the 192×192 frame.
+        // Drawing the whole 192×192 at 1×tile leaves the body at 52% of tile width.
+        // Crop to (100×130) at the correct frame-horizontal offset so it fills 1 tile.
+        const colony = snap.colonies.find(c => c.id === a.colony_id);
+        const palette = (colony?.sprite_palette as ColonyPalette | undefined) ?? 'Blue';
+        const palettePawns = sprites.pawns[palette] ?? sprites.pawns.Blue;
+        const anim = a.alive ? this.animStates.get(a.id) : undefined;
+        const variant: PawnVariant = anim?.variant ?? 'idle';
+        const sheet = palettePawns[variant];
+        const frameIndex = anim?.frameIndex ?? 0;
+        // Source: crop the body from the correct animation frame column.
+        // Within-frame body crop: (46, 30) to (146, 160) = 100×130 px.
+        const srcX = frameIndex * PAWN_FRAME_PX + 46;
+        const srcY = 30, srcW = 100, srcH = 130;
         const pawnW = tilePx;
         const pawnH = tilePx * (srcH / srcW);
         const pawnX = cx - pawnW / 2;
@@ -485,15 +556,15 @@ export class Canvas2DRenderer implements Renderer {
         if (!a.alive) {
           ctx.save();
           ctx.globalAlpha = 0.35;
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
           ctx.restore();
         } else if (traversing) {
           ctx.save();
           ctx.globalAlpha = 0.75;
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
           ctx.restore();
         } else {
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
         }
       } else {
         // Procedural fallback body + outline + gloss highlight.
@@ -645,6 +716,12 @@ export class Canvas2DRenderer implements Renderer {
       this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
     }
 
+    // Sweep departed/dead agents from animStates to prevent unbounded growth.
+    const aliveIds = new Set(agents.map(a => a.id));
+    for (const id of Array.from(this.animStates.keys())) {
+      if (!aliveIds.has(id)) this.animStates.delete(id);
+    }
+
     ctx.restore();
   }
 
@@ -657,6 +734,8 @@ export class Canvas2DRenderer implements Renderer {
     this.lastHeightPx = -1;
     this.prevPositions.clear();
     this.lastSeenPositions.clear();
+    this.animStates.clear();
+    this.lastFrameAt = 0;
     this.lastSeenTick = -1;
   }
 }

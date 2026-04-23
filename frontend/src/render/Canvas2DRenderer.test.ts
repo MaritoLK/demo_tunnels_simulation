@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Canvas2DRenderer } from './Canvas2DRenderer';
+import { Canvas2DRenderer, pickVariant } from './Canvas2DRenderer';
 import type { FrameSnapshot } from './Renderer';
 
 // Integration test: the renderer owns canvas 2D calls. We stub
@@ -391,5 +391,29 @@ describe('Canvas2DRenderer — tick interpolation', () => {
     }));
     expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(1, 2);
     r.dispose();
+  });
+});
+
+describe('pickVariant', () => {
+  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo: 0 };
+
+  it('returns idle when stationary with no cargo', () => {
+    expect(pickVariant(baseAgent, { x: 1, y: 1 })).toBe('idle');
+  });
+
+  it('returns idleMeat when stationary with cargo', () => {
+    expect(pickVariant({ ...baseAgent, cargo: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
+  });
+
+  it('returns run when moving, no cargo', () => {
+    expect(pickVariant(baseAgent, { x: 0, y: 1 })).toBe('run');
+  });
+
+  it('returns runMeat when moving with cargo', () => {
+    expect(pickVariant({ ...baseAgent, cargo: 3 }, { x: 0, y: 1 })).toBe('runMeat');
+  });
+
+  it('returns idle when prev is undefined (first frame)', () => {
+    expect(pickVariant(baseAgent, undefined)).toBe('idle');
   });
 });
