@@ -9,7 +9,8 @@ class Decision:
     """Result of a decision tick. `action` is the action-name the engine
     picked; `reason` is a short human-readable explanation of which
     branch of the priority ladder fired. Both come from one ladder walk
-    inside decide_action — never from two parallel functions."""
+    inside decide_action — never two ladder walks (i.e. don't grow a
+    parallel reason_for() function; see CLAUDE.md §Design principles)."""
     action: str
     reason: str
 
@@ -79,8 +80,19 @@ def decide_action(agent, world, colony, phase) -> Decision:
       7. Rogue eat-from-pouch.
       8. Tail (forage / explore).
 
+    Design notes — why this shape:
+      * Agents live in the world, not at camp. The only forced returns
+        home are social pressure (only at-camp socialise refills it) and
+        a full cargo (so colonists eventually deposit instead of stranding
+        their pouch in the field).
+      * Night is rest-in-place, not march-home — the prior dusk/night
+        forced-march loop ate ~60 ticks of demo time on idle pawns.
+      * Rogue agents skip the camp branches entirely; their social need
+        floor is permanent so step-to-camp would be busywork.
+
     Every branch returns one Decision literal so action + reason cannot
-    drift. See CLAUDE.md §Design principles.
+    drift. See CLAUDE.md §Design principles and the spec's
+    §Single-source-of-truth section for the full reason-string table.
     """
     hc = int(needs.HEALTH_CRITICAL)
     ec = int(needs.ENERGY_CRITICAL)
