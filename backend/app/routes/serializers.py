@@ -7,6 +7,9 @@ Field renames happen here (not in the engine or models):
   * Event DB column `event_type` is exposed on the wire as `type` —
     matches the engine's internal event key and keeps the REST surface
     consistent with what clients see in the `/step` response.
+  * Engine slot `Agent.last_decision_reason` is exposed on the wire as
+    `decision_reason` — internal name describes when it's set ("last");
+    wire name describes what it is. See agent.py:69 for the slot default.
 """
 from app.engine import cycle
 
