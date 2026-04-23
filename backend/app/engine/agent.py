@@ -1,5 +1,17 @@
 """Runtime Agent and per-tick driver. Pure Python — no Flask, no DB imports."""
+from dataclasses import dataclass
+
 from . import actions, config, needs
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """Result of a decision tick. `action` is the action-name the engine
+    picked; `reason` is a short human-readable explanation of which
+    branch of the priority ladder fired. Both come from one ladder walk
+    inside decide_action — never from two parallel functions."""
+    action: str
+    reason: str
 
 
 class Agent:
