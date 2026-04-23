@@ -10,7 +10,10 @@ interface Props {
   screenY: number;
 }
 
-function clamp(
+// Exported for direct unit testing — dual-axis overflow handling is
+// load-bearing for the "hover near screen edge" UX and deserves coverage
+// beyond the render-level tests that only hit the non-overflow branch.
+export function clamp(
   x: number, y: number,
   width: number, height: number,
   viewportW: number, viewportH: number,

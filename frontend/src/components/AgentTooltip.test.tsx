@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { AgentTooltip } from './AgentTooltip';
+import { AgentTooltip, clamp } from './AgentTooltip';
 import type { Agent, Colony } from '../api/types';
 
 const baseAgent: Agent = {
@@ -50,5 +50,35 @@ describe('AgentTooltip', () => {
     // The reason text would be empty; just confirm the component still
     // renders the agent name (doesn't crash on empty reason).
     expect(screen.getByText('Alice')).toBeInTheDocument();
+  });
+});
+
+describe('clamp', () => {
+  // Viewport 1000×800, tooltip 200×140, 8-px offset from cursor.
+  const W = 200, H = 140, VW = 1000, VH = 800;
+
+  it('positions below-right of cursor when there is room on both axes', () => {
+    // Cursor in upper-left quadrant — default branch for X and Y.
+    expect(clamp(100, 100, W, H, VW, VH)).toEqual({ left: 108, top: 108 });
+  });
+
+  it('mirrors to the left of cursor when right-edge would overflow', () => {
+    // Cursor near right edge — X flip; Y default.
+    const { left, top } = clamp(950, 100, W, H, VW, VH);
+    expect(left).toBe(950 - W - 8); // 742
+    expect(top).toBe(108);
+  });
+
+  it('mirrors above cursor when bottom-edge would overflow', () => {
+    // Cursor near bottom edge — Y flip; X default.
+    const { left, top } = clamp(100, 750, W, H, VW, VH);
+    expect(left).toBe(108);
+    expect(top).toBe(750 - H - 8); // 602
+  });
+
+  it('mirrors on both axes near the bottom-right corner', () => {
+    const { left, top } = clamp(950, 750, W, H, VW, VH);
+    expect(left).toBe(742);
+    expect(top).toBe(602);
   });
 });
