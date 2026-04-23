@@ -114,7 +114,7 @@ export function WorldCanvas() {
       currentTick: sim.data?.tick ?? 0,
       phase: sim.data?.phase,
     };
-  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick]);
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick, sim.data?.phase]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {
