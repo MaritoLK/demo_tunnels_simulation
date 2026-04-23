@@ -1053,18 +1053,22 @@ EOF
 
 Append to `backend/tests/services/test_mappers.py`:
 ```python
-def test_colony_mapper_round_trip_preserves_sprite_palette():
-    """EngineColony → row → EngineColony keeps sprite_palette intact."""
+def test_colony_mapper_round_trip_preserves_sprite_palette(db_session):
+    """EngineColony → row → EngineColony keeps sprite_palette intact.
+
+    Uses the `db_session` fixture so the conftest `_truncate_all`
+    teardown wipes the `colonies` row between tests. Bare `db.session`
+    would skip that teardown and leak state across the suite.
+    """
     from app.services import mappers
     from app.engine.colony import EngineColony
-    from app import db, models
 
     c = EngineColony(id=None, name='Red', color='#e74c3c',
                      camp_x=3, camp_y=3, food_stock=18,
                      sprite_palette='Red')
     row = mappers.colony_to_row(c)
-    db.session.add(row)
-    db.session.flush()
+    db_session.add(row)
+    db_session.flush()
     restored = mappers.row_to_colony(row)
     assert restored.sprite_palette == 'Red'
     assert restored.name == 'Red'
