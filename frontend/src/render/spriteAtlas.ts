@@ -26,10 +26,26 @@ import meatUrl from '../assets/tiny-swords/free/Terrain/Resources/Meat/Meat Reso
 // still pose.
 import bushUrl from '../assets/tiny-swords/free/Terrain/Decorations/Bushes/Bushe1.png';
 import rockUrl from '../assets/tiny-swords/free/Terrain/Decorations/Rocks/Rock1.png';
-// Pawn idle sheet — 1536×192 = 8 frames of 192×192. The pawn body
-// occupies the lower-centre of each frame; the upper rows are
-// animation overshoot space (head bob, tool sweep).
-import pawnIdleUrl from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Idle.png';
+// 4 colors × 4 variants = 16 explicit imports (Vite needs static URL
+// strings; can't build import paths at runtime). Cargo-aware variants
+// (Idle_Meat, Run_Meat) show the pawn carrying meat — visual feedback
+// that cargo > 0.
+import redIdleUrl       from '../assets/tiny-swords/free/Units/Red Units/Pawn/Pawn_Idle.png';
+import redRunUrl        from '../assets/tiny-swords/free/Units/Red Units/Pawn/Pawn_Run.png';
+import redIdleMeatUrl   from '../assets/tiny-swords/free/Units/Red Units/Pawn/Pawn_Idle Meat.png';
+import redRunMeatUrl    from '../assets/tiny-swords/free/Units/Red Units/Pawn/Pawn_Run Meat.png';
+import blueIdleUrl      from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Idle.png';
+import blueRunUrl       from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Run.png';
+import blueIdleMeatUrl  from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Idle Meat.png';
+import blueRunMeatUrl   from '../assets/tiny-swords/free/Units/Blue Units/Pawn/Pawn_Run Meat.png';
+import purpleIdleUrl     from '../assets/tiny-swords/free/Units/Purple Units/Pawn/Pawn_Idle.png';
+import purpleRunUrl      from '../assets/tiny-swords/free/Units/Purple Units/Pawn/Pawn_Run.png';
+import purpleIdleMeatUrl from '../assets/tiny-swords/free/Units/Purple Units/Pawn/Pawn_Idle Meat.png';
+import purpleRunMeatUrl  from '../assets/tiny-swords/free/Units/Purple Units/Pawn/Pawn_Run Meat.png';
+import yellowIdleUrl     from '../assets/tiny-swords/free/Units/Yellow Units/Pawn/Pawn_Idle.png';
+import yellowRunUrl      from '../assets/tiny-swords/free/Units/Yellow Units/Pawn/Pawn_Run.png';
+import yellowIdleMeatUrl from '../assets/tiny-swords/free/Units/Yellow Units/Pawn/Pawn_Idle Meat.png';
+import yellowRunMeatUrl  from '../assets/tiny-swords/free/Units/Yellow Units/Pawn/Pawn_Run Meat.png';
 // House sprites — 128×192 static per colony palette. Keyed by the
 // backend colony name (Red / Blue / Purple / Yellow — see
 // DEFAULT_COLONY_PALETTE in simulation_service.py). Drawn over the
@@ -39,13 +55,20 @@ import houseBlueUrl from '../assets/tiny-swords/free/Buildings/Blue Buildings/Ho
 import housePurpleUrl from '../assets/tiny-swords/free/Buildings/Purple Buildings/House1.png';
 import houseYellowUrl from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House1.png';
 
+export type PawnVariant = 'idle' | 'run' | 'idleMeat' | 'runMeat';
+export type ColonyPalette = 'Red' | 'Blue' | 'Purple' | 'Yellow';
+
 export interface SpriteAtlas {
   tilemap: HTMLImageElement;
   water: HTMLImageElement;
   meat: HTMLImageElement;
   bush: HTMLImageElement;
   rock: HTMLImageElement;
+  // Deprecated — the old single-pawn field. Kept for compatibility with
+  // any render path that hasn't migrated to the per-palette lookup yet;
+  // points at Blue idle so behavior is unchanged.
   pawn: HTMLImageElement;
+  pawns: Record<ColonyPalette, Record<PawnVariant, HTMLImageElement>>;
   houses: Record<string, HTMLImageElement>;
 }
 
@@ -97,8 +120,17 @@ export const HOUSE_FRAME_H = 192;
 export async function loadSprites(): Promise<SpriteAtlas> {
   // Promise.all so all image loads run in parallel — first paint
   // is gated on the slowest, not the sum.
+  const loadPair = (urls: Record<PawnVariant, string>) =>
+    Promise.all([
+      loadImage(urls.idle),
+      loadImage(urls.run),
+      loadImage(urls.idleMeat),
+      loadImage(urls.runMeat),
+    ]);
+
   const [
-    tilemap, water, meat, bush, rock, pawn,
+    tilemap, water, meat, bush, rock,
+    redPawns, bluePawns, purplePawns, yellowPawns,
     houseRed, houseBlue, housePurple, houseYellow,
   ] = await Promise.all([
     loadImage(tilemapUrl),
@@ -106,14 +138,29 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     loadImage(meatUrl),
     loadImage(bushUrl),
     loadImage(rockUrl),
-    loadImage(pawnIdleUrl),
+    loadPair({ idle: redIdleUrl,    run: redRunUrl,    idleMeat: redIdleMeatUrl,    runMeat: redRunMeatUrl }),
+    loadPair({ idle: blueIdleUrl,   run: blueRunUrl,   idleMeat: blueIdleMeatUrl,   runMeat: blueRunMeatUrl }),
+    loadPair({ idle: purpleIdleUrl, run: purpleRunUrl, idleMeat: purpleIdleMeatUrl, runMeat: purpleRunMeatUrl }),
+    loadPair({ idle: yellowIdleUrl, run: yellowRunUrl, idleMeat: yellowIdleMeatUrl, runMeat: yellowRunMeatUrl }),
     loadImage(houseRedUrl),
     loadImage(houseBlueUrl),
     loadImage(housePurpleUrl),
     loadImage(houseYellowUrl),
   ]);
+
+  const packPawns = (arr: HTMLImageElement[]): Record<PawnVariant, HTMLImageElement> => ({
+    idle: arr[0], run: arr[1], idleMeat: arr[2], runMeat: arr[3],
+  });
+
   return {
-    tilemap, water, meat, bush, rock, pawn,
+    tilemap, water, meat, bush, rock,
+    pawn: bluePawns[0],   // legacy single-pawn field = Blue idle (unchanged behavior)
+    pawns: {
+      Red:    packPawns(redPawns),
+      Blue:   packPawns(bluePawns),
+      Purple: packPawns(purplePawns),
+      Yellow: packPawns(yellowPawns),
+    },
     houses: {
       Red: houseRed,
       Blue: houseBlue,
