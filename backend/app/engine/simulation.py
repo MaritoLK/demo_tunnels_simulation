@@ -61,7 +61,8 @@ class Simulation:
             default = EngineColony(id=None, name='_default', color='#000',
                                    camp_x=0, camp_y=0,
                                    food_stock=config.INITIAL_FOOD_STOCK,
-                                   growing_count=0)
+                                   growing_count=0,
+                                   sprite_palette='Blue')
             self.colonies = {None: default}
 
     def snapshot_rng_state(self):

@@ -118,3 +118,39 @@ def test_agent_to_dict_decision_reason_empty_pre_tick():
     a = EngineAgent('Bob', 2, 2)  # last_decision_reason defaults to ''
     dumped = agent_to_dict(a)
     assert dumped['decision_reason'] == ''
+
+
+def test_default_simulation_colonies_have_sprite_palette():
+    """4-colony default spawn: each colony has sprite_palette matching
+    its name. Locks DEFAULT_COLONY_PALETTE → EngineColony threading."""
+    from app.engine.simulation import new_simulation
+    from app.engine.colony import EngineColony
+
+    colonies = [
+        EngineColony(id=i+1, name=name, color=color, camp_x=i, camp_y=i,
+                     food_stock=10, sprite_palette=name)
+        for i, (name, color) in enumerate(
+            [('Red', '#e74c3c'), ('Blue', '#3498db')]
+        )
+    ]
+    sim = new_simulation(10, 10, seed=42, colonies=colonies,
+                         agents_per_colony=2)
+    for c in sim.colonies.values():
+        assert c.sprite_palette in ('Red', 'Blue')
+
+
+def test_synthesized_default_colony_sprite_palette_is_blue():
+    """Simulation.__init__ with colonies=None synthesizes a default.
+    That default gets sprite_palette='Blue' so the frontend fallback
+    is explicit at the data layer, not implicit in the renderer."""
+    from app.engine.simulation import Simulation
+    from app.engine.world import World, Tile
+
+    w = World(3, 3)
+    w.tiles = [
+        [Tile(x, y, 'grass') for x in range(3)]
+        for y in range(3)
+    ]
+    sim = Simulation(w)                                      # no colonies
+    default = next(iter(sim.colonies.values()))
+    assert default.sprite_palette == 'Blue'

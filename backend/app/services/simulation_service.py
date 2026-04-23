@@ -100,10 +100,10 @@ def _reset_cache():
 
 
 DEFAULT_COLONY_PALETTE = [
-    ('Red',    '#e74c3c'),
-    ('Blue',   '#3498db'),
-    ('Purple', '#9b59b6'),
-    ('Yellow', '#f1c40f'),
+    ('Red',    '#e74c3c', 'Red'),
+    ('Blue',   '#3498db', 'Blue'),
+    ('Purple', '#9b59b6', 'Purple'),
+    ('Yellow', '#f1c40f', 'Yellow'),
 ]
 
 
@@ -119,11 +119,12 @@ def _build_default_colonies(width, height, n_colonies):
     positions = _default_camp_positions(width, height, n_colonies)
     palette = DEFAULT_COLONY_PALETTE[:n_colonies]
     out = []
-    for (name, color), (cx, cy) in zip(palette, positions):
+    for (name, color, sprite_palette), (cx, cy) in zip(palette, positions):
         out.append(EngineColony(
             id=None, name=name, color=color,
             camp_x=cx, camp_y=cy,
             food_stock=engine_config.INITIAL_FOOD_STOCK,
+            sprite_palette=sprite_palette,
         ))
     return out
 
