@@ -24,6 +24,7 @@ class Agent:
         'move_cooldown',
         'rogue', 'loner',
         'cargo',
+        'last_decision_reason',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -62,6 +63,10 @@ class Agent:
         # feed the agent's own hunger — that's the foraging side-effect
         # that already fills hunger during the gather action.
         self.cargo = 0.0
+        # Populated per tick by tick_agent after decide_action. Empty string
+        # before the first tick so serializer + UI can treat absence as
+        # "no decision yet" without special-casing None.
+        self.last_decision_reason = ''
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
@@ -241,6 +246,7 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
             f"not in colonies_by_id {list(colonies_by_id)!r}"
         )
     decision = decide_action(agent, world, colony, phase)
+    agent.last_decision_reason = decision.reason
     events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
 
     agent.age += 1

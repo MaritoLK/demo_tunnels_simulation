@@ -254,3 +254,18 @@ def test_tick_agent_well_fed_rest_recovers_health_over_time():
     for _ in range(10):
         tick_agent(a, world, [a], colonies, phase='day', rng=random.Random(0))
     assert a.health > start
+
+
+def test_tick_agent_sets_last_decision_reason():
+    """After one tick, agent.last_decision_reason is populated with the
+    same string decide_action returned. Empty string before the first
+    tick is also a contract (Agent.__init__ default)."""
+    world = _grass_world()
+    a = Agent('Alice', 1, 1, colony_id=1)
+    assert a.last_decision_reason == ''          # pre-tick default
+    tick_agent(a, world, [a], {1: _colony()}, phase='day',
+               rng=random.Random(0))
+    assert a.last_decision_reason != ''          # now populated
+    # Reason should mention at least one semantic token the engine uses
+    assert any(token in a.last_decision_reason for token in
+               ('hunger', 'energy', 'social', 'cargo', 'explore', 'plant', 'forage'))
