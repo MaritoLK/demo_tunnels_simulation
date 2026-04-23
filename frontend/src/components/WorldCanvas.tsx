@@ -24,9 +24,10 @@
 //     under the cursor across the zoom, which feels natural.
 //   - A click without meaningful drag hit-tests the agent layer and
 //     updates `selectedAgentId` via Zustand.
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../api/client';
+import type { Agent, Colony } from '../api/types';
 import { useAgents, useColonies, useSimulation, useWorld } from '../api/queries';
 import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
@@ -46,6 +47,23 @@ const CLICK_DRAG_THRESHOLD = 4;
 // Inset so the fitted world doesn't kiss the frame edge.
 const FIT_PAD = 24;
 
+function pixelToTile(
+  px: number, py: number,
+  snap: { cameraX: number; cameraY: number; tilePx: number },
+): { x: number; y: number } {
+  return {
+    x: Math.floor((px - snap.cameraX) / snap.tilePx),
+    y: Math.floor((py - snap.cameraY) / snap.tilePx),
+  };
+}
+
+interface HoverState {
+  agent: Agent;
+  colony: Colony | undefined;
+  screenX: number;
+  screenY: number;
+}
+
 export function WorldCanvas() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -59,6 +77,8 @@ export function WorldCanvas() {
     lastY: number;
     totalMoved: number;
   } | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const lastMoveTsRef = useRef(0);
   // Track whether the user has manually adjusted the view (wheel-zoom
   // *or* pan) since the last world-load. If they have, don't clobber
   // their view when the frame resizes — only auto-fit on world change.
@@ -196,6 +216,7 @@ export function WorldCanvas() {
     // every terminating path (release, cancel, focus loss, drag-drop
     // sequence). See §9.29-F2 for the audit trail.
     const onPointerDown = (e: PointerEvent) => {
+      setHover(null);               // drag-start cancels hover
       // Primary button only; ignore right-click/middle so they don't
       // start a pan that the user doesn't expect.
       if (e.button !== 0) return;
@@ -282,11 +303,48 @@ export function WorldCanvas() {
       userAdjustedRef.current = true;
     };
 
+    const onPointerMoveHover = (e: PointerEvent) => {
+      if (dragRef.current) {
+        setHover(null);
+        return;
+      }
+      const now = performance.now();
+      if (now - lastMoveTsRef.current < 16) return;    // ~60fps throttle
+      lastMoveTsRef.current = now;
+
+      const snap = snapRef.current;
+      if (!snap) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+      const tile = pixelToTile(localX, localY, snap);
+
+      const agent = snap.agents.find(
+        a => a.alive && a.x === tile.x && a.y === tile.y,
+      );
+      if (!agent) {
+        setHover(null);
+        return;
+      }
+      const colony = snap.colonies.find(c => c.id === agent.colony_id);
+      setHover({
+        agent,
+        colony,
+        screenX: e.clientX,
+        screenY: e.clientY,
+      });
+    };
+
+    const onPointerLeave = () => setHover(null);
+
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointermove', onPointerMoveHover);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onLostCapture);
     canvas.addEventListener('lostpointercapture', onLostCapture);
+    canvas.addEventListener('pointerleave', onPointerLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
     // selectTile is referenced inside onPointerUp; keep deps tracked.
@@ -294,9 +352,11 @@ export function WorldCanvas() {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointermove', onPointerMoveHover);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onLostCapture);
       canvas.removeEventListener('lostpointercapture', onLostCapture);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
       canvas.removeEventListener('wheel', onWheel);
       rendererRef.current?.dispose();
       rendererRef.current = null;
@@ -322,6 +382,23 @@ export function WorldCanvas() {
         aria-label="Colony simulation map — pan with drag, zoom with wheel, click to select an agent or tile"
       />
       {status && <div className="overlay">{status}</div>}
+      {hover && (
+        <div
+          style={{
+            position: 'fixed',
+            left: hover.screenX + 8,
+            top: hover.screenY + 8,
+            padding: '4px 8px',
+            background: '#111',
+            color: '#fff',
+            fontSize: 12,
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          {hover.agent.name} — {hover.agent.state}
+        </div>
+      )}
     </div>
   );
 }
