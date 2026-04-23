@@ -194,14 +194,11 @@ def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
-def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng):
+def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     """Advance one tick for `agent`.
 
     `colonies_by_id` is a dict {colony_id: EngineColony}. Indexing by
     agent.colony_id keeps lookup O(1). `phase` comes from cycle.phase_for.
-
-    Legacy callers that pass neither `colonies_by_id` nor `phase` fall back
-    to the original pre-cultivation behavior.
     """
     if not agent.alive:
         return []
@@ -217,12 +214,6 @@ def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng
         events.append(actions.die(agent))
         return events
 
-    # Legacy compat: if either colonies_by_id or phase is None, fall back
-    # to the original tick_agent body.
-    if colonies_by_id is None or phase is None:
-        return _legacy_tick_agent(agent, world, all_agents, rng=rng)
-
-    # New path: phase-aware behavior with colony lookup.
     # Dawn-eat flag is transient: cleared any tick that isn't in the dawn
     # window so next dawn's decide_action sees a fresh eligibility.
     if phase != 'dawn':

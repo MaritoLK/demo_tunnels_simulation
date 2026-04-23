@@ -109,30 +109,16 @@ class Simulation:
         phase = cycle.phase_for(self.current_tick)
         self.recompute_growing_counts()
         snapshot = list(self.agents)
-        if self.colonies:
-            # Colony-aware: thread phase + colonies through the new tick_agent path.
-            for agent in snapshot:
-                if not agent.alive:
-                    continue
-                for event in tick_agent(
-                    agent, self.world, snapshot, self.colonies,
-                    phase=phase, rng=self.rng_tick,
-                ):
-                    event['tick'] = self.current_tick
-                    event['agent_id'] = agent.id
-                    events.append(event)
-        else:
-            # Legacy sim (no colonies wired). Use the pre-cultivation tick signature
-            # so _legacy_tick_agent runs — colonies_by_id=None disables phase gating
-            # and keeps existing audit scripts + test_simulation tests green. Retired
-            # when all callers migrate to colonies=[...] (later plan task).
-            for agent in snapshot:
-                if not agent.alive:
-                    continue
-                for event in tick_agent(agent, self.world, snapshot, rng=self.rng_tick):
-                    event['tick'] = self.current_tick
-                    event['agent_id'] = agent.id
-                    events.append(event)
+        for agent in snapshot:
+            if not agent.alive:
+                continue
+            for event in tick_agent(
+                agent, self.world, snapshot, self.colonies,
+                phase=phase, rng=self.rng_tick,
+            ):
+                event['tick'] = self.current_tick
+                event['agent_id'] = agent.id
+                events.append(event)
         for event in self.world.tick(phase):
             event['tick'] = self.current_tick
             events.append(event)
