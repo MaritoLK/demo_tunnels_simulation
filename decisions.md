@@ -171,7 +171,19 @@ User green-lit "remove any legacy thing" (2026-04-23). Survey discovered the sco
 
 **Recommendation: α.** Same dead-code removal, less churn, no test-behavior surprises beyond the at-camp shift (fixed by repositioning agents). β is a "cleanup of the cleanup" that's better suited to post-demo.
 
-**Awaiting user pick** before Round D execution.
+### α executed (2026-04-23)
+
+| Step | Commit | What |
+|------|--------|------|
+| D1 | 25d5a37 | test_agent.py: 11 decide_action + 5 tick_agent migrated to phase-aware form |
+| D2 | 7666273 | docs/audit/bug-index.md: noted scripts use pre-cleanup signatures |
+| D3+D4a | f12f906 | Simulation.__init__ synthesizes default colony; decide_action's legacy gates removed |
+| D4b | 50aed1b | tick_agent legacy gate removed (colonies_by_id + phase now required); Simulation.step legacy branch collapsed |
+| D4c | 86a5fbd | Deleted `_legacy_decide_action` + `_legacy_tick_agent`; execute_action `colony=None` default dropped |
+| D4d | 495af0d | Dropped `getattr(agent, 'rogue/cargo/loner', …)` defenses across decide_action, decay_needs, forage, deposit_cargo, eat_cargo, agent_to_dict |
+| wrap | e12d2a8 | actions.socialise: dropped now-dead `colony=None` default + branch; relabeled "legacy" → "random spawn" in docstrings of new_simulation/create_simulation/PUT route |
+
+**Net:** −110 source LOC, +35 doc lines, single colony-aware tick path through the engine. Baseline 227 backend + 36 frontend = 263 green throughout.
 
 ---
 
@@ -259,3 +271,4 @@ Each Phase 2 commit will:
 - **2026-04-23 13:10** — Round B (backend T1) executed: 4 accepts (T1.B1, T1.I2, T1.B2, T1.B4), 3 rejects (T1.B3, T1.B5, T1.B7). Commits 5fb5d45, 5e1e3c7, e7b9d96, d449ee5. Pytest after each: 227 green throughout. Deprecation warning in test output eliminated.
 - **2026-04-23 13:05** — Round C (frontend T1) executed: 1 accept (T1.F7), 5 rejects (T1.F1, T1.F3, T1.F4, T1.F5, T1.F6). Commit d4d128c. vitest+tsc green: 36 tests, 0 type errors.
 - **2026-04-23 13:25** — Round D scope discovery surfaced a wider blast radius than the audit framed. Two end-states drafted (α minimal, β full). Awaiting user pick before any Round D code change.
+- **2026-04-23 14:50** — User picked α. Round D executed in 7 commits (25d5a37 → e12d2a8). All `_legacy_*` paths gone; engine has a single tick path; getattr defenses dropped; convenience overloads (`agent_count=N`) preserved via synthesized default colony in `Simulation.__init__`. Backend 227 / frontend 36 green throughout. Tag: `cleanup-round-d`.
