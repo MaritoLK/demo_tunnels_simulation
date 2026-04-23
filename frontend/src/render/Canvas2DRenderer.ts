@@ -465,10 +465,13 @@ export class Canvas2DRenderer implements Renderer {
       ctx.restore();
     }
 
-    // Colony color lookup — O(1) per agent in the loop below. Built once
+    // Colony lookup — O(1) per agent in the loop below. Built once
     // per frame; colonies array is small (<=4) so this is negligible.
-    const colonyColorById = new Map<number, string>();
-    for (const c of colonies) colonyColorById.set(c.id, c.color);
+    // The full colony object is needed for both .color (existing) and
+    // .sprite_palette (Task 11 palette-aware pawn draw); a single map
+    // avoids two parallel `find` calls.
+    const colonyById = new Map<number, typeof colonies[number]>();
+    for (const c of colonies) colonyById.set(c.id, c);
 
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
@@ -533,12 +536,12 @@ export class Canvas2DRenderer implements Renderer {
         // Each pawn sheet is 1536×192 = 8 frames of PAWN_FRAME_PX×PAWN_FRAME_PX.
         // The anim state was set for alive agents in the frame-cycling block above.
         // Dead agents skip the anim state (not alive → not in animStates) so
-        // fall back to Blue idle sheet at frame 0.
+        // fall back to the colony palette's idle sheet at frame 0.
         //
         // Tight crop: body lives at roughly (46,30)–(146,160) in the 192×192 frame.
         // Drawing the whole 192×192 at 1×tile leaves the body at 52% of tile width.
         // Crop to (100×130) at the correct frame-horizontal offset so it fills 1 tile.
-        const colony = snap.colonies.find(c => c.id === a.colony_id);
+        const colony = a.colony_id != null ? colonyById.get(a.colony_id) : undefined;
         const palette = (colony?.sprite_palette as ColonyPalette | undefined) ?? 'Blue';
         const palettePawns = sprites.pawns[palette] ?? sprites.pawns.Blue;
         const anim = a.alive ? this.animStates.get(a.id) : undefined;
@@ -608,7 +611,7 @@ export class Canvas2DRenderer implements Renderer {
       // small and high so it doesn't fight the body silhouette.
       // Rogue agents: broken-dash ring in a desaturated tone — they've
       // lost their colony tie, so the visual should too.
-      const colonyColor = a.colony_id != null ? colonyColorById.get(a.colony_id) : undefined;
+      const colonyColor = a.colony_id != null ? colonyById.get(a.colony_id)?.color : undefined;
       if (colonyColor) {
         ctx.save();
         if (a.rogue) {
@@ -716,10 +719,15 @@ export class Canvas2DRenderer implements Renderer {
       this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
     }
 
-    // Sweep departed/dead agents from animStates to prevent unbounded growth.
-    const aliveIds = new Set(agents.map(a => a.id));
+    // Sweep departed agents from animStates to prevent unbounded growth.
+    // Includes corpses still in the snapshot (agent.alive==false) — but
+    // those never entered animStates anyway (anim-advance loop skips dead),
+    // so the delete on a present-but-corpse id is a harmless no-op.
+    // Variable named distinctly from the `presentIds` set used earlier
+    // for the prevPositions sweep — same concept, different lifecycle.
+    const animPresentIds = new Set(agents.map(a => a.id));
     for (const id of Array.from(this.animStates.keys())) {
-      if (!aliveIds.has(id)) this.animStates.delete(id);
+      if (!animPresentIds.has(id)) this.animStates.delete(id);
     }
 
     ctx.restore();
