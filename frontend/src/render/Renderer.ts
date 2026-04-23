@@ -45,6 +45,10 @@ export interface FrameSnapshot {
   // interpolation. Scalar render input — not a simulation concern
   // leaking in, same category as tilePx.
   currentTick: number;
+  // Current day/night phase from the simulation. Used to tint
+  // state icon overlays (reduced opacity at night). May be missing
+  // during early load — falls back to 'day'.
+  phase?: string;
 }
 
 export interface Renderer {

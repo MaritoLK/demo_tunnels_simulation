@@ -112,6 +112,7 @@ export function WorldCanvas() {
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
       currentTick: sim.data?.tick ?? 0,
+      phase: sim.data?.phase,
     };
   }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick]);
 

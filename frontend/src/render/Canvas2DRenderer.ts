@@ -36,7 +36,7 @@ import {
   type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
-import { FRAME_MS, FRAMES_PER_CYCLE } from './animConfig';
+import { FRAME_MS, FRAMES_PER_CYCLE, STATE_ICON_MAP } from './animConfig';
 
 interface AnimState {
   variant: PawnVariant;
@@ -586,6 +586,14 @@ export class Canvas2DRenderer implements Renderer {
         ctx.fill();
       }
 
+      // State icon overlay — small glyph above the pawn. Skip when state's
+      // glyph is empty (default for 'idle' = nothing to say). Phase = current
+      // day/night phase from snap; falls back to 'day' if missing.
+      const pawnTopY = sprites && a.alive
+        ? cy + tilePx * 0.5 - tilePx * (130 / 100)  // sprite path pawnY
+        : cy - r;  // procedural path approximate top
+      this._drawStateIcon(ctx, a.state, cx, pawnTopY, snap.phase ?? 'day');
+
       // Cargo pip — small brown satchel at top-right of the pawn when
       // the agent is carrying anything. Radius scales with fullness
       // (minimum visible even at 1 unit, max at CARRY_MAX) so the
@@ -745,6 +753,24 @@ export class Canvas2DRenderer implements Renderer {
     this.animStates.clear();
     this.lastFrameAt = 0;
     this.lastSeenTick = -1;
+  }
+
+  private _drawStateIcon(
+    ctx: CanvasRenderingContext2D,
+    state: string,
+    cx: number,
+    baseY: number,
+    phase: string,
+  ): void {
+    const glyph = STATE_ICON_MAP[state] ?? '';
+    if (!glyph) return;                   // draw-guard — no fillText('')
+    ctx.save();
+    ctx.globalAlpha = phase === 'night' ? 0.4 : 1.0;
+    ctx.font = '18px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(glyph, cx, baseY - 18);
+    ctx.restore();
   }
 }
 
