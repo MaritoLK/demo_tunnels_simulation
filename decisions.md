@@ -48,14 +48,16 @@ These block / shape the cleanup. Please answer inline (edit this file) or in cha
 
 | # | Finding | File:line | Action | Status |
 |---|---------|-----------|--------|--------|
-| T0.1 | README claims backend on `localhost:8000` but actual is `:5000` direct, `:80` via nginx | `README.md:19` | Fix port to `:5000` (or `:80` if nginx-fronted is preferred) | proposed |
-| T0.2 | `CLAUDE.md` interview date stale: says `2026-04-17`, actual re-demo is `2026-04-28` | `CLAUDE.md:30` | Update date + clarify "re-demo" vs original demo | proposed |
-| T0.3 | `frontend/src/test/setup.js` is a stale duplicate of `setup.ts`; `vite.config.ts` only loads `setup.ts` | `frontend/src/test/setup.js` | Delete file (-7 LOC) | proposed |
-| T0.4 | `frontend/src/test/smoke.test.ts` is a placeholder (`expect(1+1).toBe(2)`) — zero signal | `frontend/src/test/smoke.test.ts` | Delete file (-8 LOC) | proposed |
-| T0.5 | Untracked plan + deleted brief sitting in working tree (see Open Q2 + Q3) | repo root + `docs/superpowers/plans/` | Commit per Open Q answers | proposed |
-| T0.6 | Branch name decision (see Open Q1) | git refs | Rename or document | proposed |
+| T0.1 | README claims backend on `localhost:8000` but actual is `:5000` direct, `:80` via nginx | `README.md:19` | Fix port to `:5000` (or `:80` if nginx-fronted is preferred) | **done** (4ceda75) |
+| T0.2 | `CLAUDE.md` interview date stale: says `2026-04-17`, actual re-demo is `2026-04-28` | `CLAUDE.md:30` | Update date + clarify "re-demo" vs original demo | **done** (9d25363) |
+| T0.3 | `frontend/src/test/setup.js` is a stale duplicate of `setup.ts`; `vite.config.ts` only loads `setup.ts` | `frontend/src/test/setup.js` | Delete file (-7 LOC) | **done** (a36680c) |
+| T0.4 | `frontend/src/test/smoke.test.ts` is a placeholder (`expect(1+1).toBe(2)`) — zero signal | `frontend/src/test/smoke.test.ts` | Delete file (-8 LOC) | **done** (35ecfb1) |
+| T0.5a | Deleted `TUNNELS_PROJECT_BRIEF.md` uncommitted | repo root | Commit deletion | **done** (f282be9) |
+| T0.5b | Untracked `2026-04-15-day-night-cultivation.md` plan | `docs/superpowers/plans/` | Commit as historical record | **done** (bb79a8b) |
+| T0.6 | Branch `archive/python-foundation` semantically misleading | git refs | Rename to `master` (local; push deferred) | **done** (local) |
+| T0.7 | `backend/audit/` is post-mortem documentation living in source tree | `backend/audit/**` | Move to `docs/audit/`, add `bug-index.md`, update `.gitignore` | **done** (26a2bdd) |
 
-**T0 LOC delta:** ≈ −15 LOC, +2 doc lines. Net cleanup, zero behavior change.
+**T0 LOC delta (actual):** −534 source/text, +3,759 docs. Frontend tests: 37→36 (smoke deletion). Backend tests: 227→227.
 
 ---
 
@@ -216,3 +218,4 @@ Each Phase 2 commit will:
 ## Changelog
 
 - **2026-04-23 12:10** — Phase 1 audit complete. Baseline 264 green confirmed. Decisions doc seeded. Awaiting user sign-off on open questions before Phase 2.
+- **2026-04-23 12:55** — Round A (T0) complete. 8 commits (4ceda75 → 30f418a). Branch renamed `archive/python-foundation` → `master` (local). Baseline re-verified: 227 backend + 36 frontend = 263 green (frontend down 1 from smoke.test.ts deletion, expected). Tag: `cleanup-round-a`.
