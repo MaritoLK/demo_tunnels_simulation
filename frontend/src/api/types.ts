@@ -50,6 +50,9 @@ export interface Agent {
   // Units of food in the agent's pouch (0..CARRY_MAX). Drained by
   // deposit at camp. Optional for legacy snapshots pre-cargo.
   cargo?: number;
+  // Engine's own one-line explanation of the last decide_action branch
+  // that fired for this agent. Empty string before the first tick.
+  decision_reason: string;
 }
 
 export interface Colony {

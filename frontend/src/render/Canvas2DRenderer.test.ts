@@ -97,6 +97,7 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
         state: 'idle',
         alive: true,
         colony_id: null,
+        decision_reason: '',
       },
     ],
     colonies: [],
@@ -230,7 +231,7 @@ describe('Canvas2DRenderer — tick interpolation', () => {
   function agentAt(id: number, x: number, y: number) {
     return {
       id, name: 'A', x, y, health: 100, hunger: 80, energy: 80, social: 80,
-      age: 0, state: 'idle', alive: true, colony_id: null,
+      age: 0, state: 'idle', alive: true, colony_id: null, decision_reason: '',
     };
   }
 

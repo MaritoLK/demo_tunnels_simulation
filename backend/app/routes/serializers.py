@@ -28,6 +28,7 @@ def agent_to_dict(agent):
         'rogue': agent.rogue,
         'loner': agent.loner,
         'cargo': agent.cargo,
+        'decision_reason': agent.last_decision_reason,
     }
 
 

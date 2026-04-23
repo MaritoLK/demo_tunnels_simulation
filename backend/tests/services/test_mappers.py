@@ -97,3 +97,24 @@ def test_rows_to_world_reassembles_out_of_order():
     assert world.get_tile(0, 1).terrain == 'stone'
     assert world.get_tile(1, 1).terrain == 'forest'
     assert world.get_tile(1, 1).resource_amount == 15.0
+
+
+def test_agent_to_dict_emits_decision_reason():
+    """The wire shape must carry last_decision_reason under the
+    decision_reason key. Frontend relies on this field being present
+    on every serialized agent (empty string is fine pre-tick)."""
+    from app.routes.serializers import agent_to_dict
+
+    a = EngineAgent('Alice', 1, 1)
+    a.last_decision_reason = 'hunger < 50 → forage'
+    dumped = agent_to_dict(a)
+    assert 'decision_reason' in dumped
+    assert dumped['decision_reason'] == 'hunger < 50 → forage'
+
+
+def test_agent_to_dict_decision_reason_empty_pre_tick():
+    from app.routes.serializers import agent_to_dict
+
+    a = EngineAgent('Bob', 2, 2)  # last_decision_reason defaults to ''
+    dumped = agent_to_dict(a)
+    assert dumped['decision_reason'] == ''
