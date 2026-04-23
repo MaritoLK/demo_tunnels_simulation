@@ -10,7 +10,7 @@ signature makes the contract impossible to bypass by accident.
 """
 from collections import deque
 
-from . import needs
+from . import config, needs
 
 
 DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -370,7 +370,6 @@ def plant(agent, world, colony):
     This function re-guards all three; a violated pre-condition yields an
     `idled` no-op event so the engine never silently mutates state.
     """
-    from . import config
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state != 'none':
         return {'type': 'idled', 'description': f'{agent.name} found crop already here'}
@@ -403,7 +402,6 @@ def harvest(agent, world, colony):
     ownership" rule from the spec. Any agent can harvest any mature tile
     and the yield goes to their own colony's stock.
     """
-    from . import config
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state != 'mature':
         return {'type': 'idled', 'description': f'{agent.name} found no mature crop'}
@@ -508,7 +506,6 @@ def eat_camp(agent, colony):
     Violations → idled no-op. Success → cap-fills hunger, emits
     ate_from_cache with amount=EAT_COST, flags agent.ate_this_dawn.
     """
-    from . import config
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
     if colony.food_stock < config.EAT_COST:

@@ -1,6 +1,8 @@
 """World grid, Tile, and procedural generation. Pure Python — no Flask, no DB."""
 import random
 
+from . import config
+
 
 TERRAINS = ('grass', 'water', 'forest', 'stone', 'sand')
 
@@ -158,7 +160,6 @@ class World:
         """
         if phase != 'day':
             return []
-        from . import config  # local import keeps engine imports flat
         events = []
         for row in self.tiles:
             for tile in row:
