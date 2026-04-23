@@ -105,15 +105,18 @@ def test_decision_has_action_and_reason():
 
 
 def test_decision_is_frozen():
+    from dataclasses import FrozenInstanceError
     d = Decision('rest', 'r')
-    with pytest.raises(Exception):  # FrozenInstanceError is a dataclass error
+    with pytest.raises(FrozenInstanceError):
         d.action = 'forage'
 
 
 def test_decision_uses_slots():
     d = Decision('rest', 'r')
-    with pytest.raises(AttributeError):
-        d.extra = 'whatever'  # slots=True → no __dict__
+    # frozen=True + slots=True on CPython 3.11+ raises TypeError from
+    # super().__setattr__, not AttributeError. Accept either.
+    with pytest.raises((AttributeError, TypeError)):
+        d.extra = 'whatever'
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
