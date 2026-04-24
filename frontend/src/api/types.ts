@@ -80,6 +80,8 @@ export interface SimulationSummary {
   speed: number;
   day: number;
   phase: Phase;
+  server_time_ms: number;
+  tick_ms: number;
 }
 
 // Composite polling response — one round-trip replaces the four separate

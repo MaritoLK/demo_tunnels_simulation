@@ -206,3 +206,34 @@ export function useSimControl() {
     },
   });
 }
+
+import { useEffect, useRef, useState } from 'react';
+import { connectWorldStream, type StreamStatus } from './stream';
+
+/** Subscribe to the SSE stream. Returns latest snapshot + connection status.
+ *  When status flips to 'fallback', the caller should switch back to the
+ *  500 ms poll — useWorldState() continues to work regardless. */
+export function useWorldStream() {
+  const [snapshot, setSnapshot] = useState<WorldStateResponse | null>(null);
+  const [status, setStatus] = useState<StreamStatus>('connecting');
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    const conn = connectWorldStream<WorldStateResponse>({
+      url: '/api/v1/world/stream',
+      onMessage: (m) => {
+        if (mounted.current) setSnapshot(m);
+      },
+      onStatus: (s) => {
+        if (mounted.current) setStatus(s);
+      },
+    });
+    return () => {
+      mounted.current = false;
+      conn.close();
+    };
+  }, []);
+
+  return { snapshot, status };
+}
