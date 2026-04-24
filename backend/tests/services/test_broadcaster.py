@@ -3,7 +3,19 @@ import queue
 import threading
 import time
 
+import pytest
+
 from app.services import broadcaster
+
+
+@pytest.fixture(autouse=True)
+def _reset_broadcaster():
+    """Module-level `_subscribers` outlives individual tests. Any leak
+    (missed `unsubscribe`, test that registers without finally) would
+    pollute the next test. Reset after each."""
+    yield
+    with broadcaster._subscribers_lock:
+        broadcaster._subscribers.clear()
 
 
 def test_subscribe_receives_publish():

@@ -17,17 +17,17 @@ _subscribers_lock = threading.Lock()
 _subscribers: list[queue.Queue[Any]] = []
 
 
-def subscribe(maxsize: int = 8) -> queue.Queue:
+def subscribe(maxsize: int = 8) -> queue.Queue[Any]:
     """Register a new subscriber. Returned queue receives every
     subsequent publish. Caller is responsible for calling unsubscribe()
     when done (typically in a finally clause of a stream handler)."""
-    q: queue.Queue = queue.Queue(maxsize=maxsize)
+    q: queue.Queue[Any] = queue.Queue(maxsize=maxsize)
     with _subscribers_lock:
         _subscribers.append(q)
     return q
 
 
-def unsubscribe(q: queue.Queue) -> None:
+def unsubscribe(q: queue.Queue[Any]) -> None:
     with _subscribers_lock:
         try:
             _subscribers.remove(q)
