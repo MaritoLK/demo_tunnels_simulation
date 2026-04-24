@@ -31,4 +31,14 @@ describe('LifecycleFade', () => {
     f.update({ present: new Set([1]), now: FADE_MS + 1000 });
     expect(f.alphaFor(1, FADE_MS + 1000)).toBe(1);
   });
+
+  it('reappearing mid-fadeout snaps back to alive at alpha=1', () => {
+    const f = new LifecycleFade();
+    f.update({ present: new Set([1]), now: 0 });
+    f.update({ present: new Set([1]), now: FADE_MS + 10 });      // alive
+    f.update({ present: new Set<number>(), now: FADE_MS + 20 }); // start fade-out
+    expect(f.alphaFor(1, FADE_MS + 20 + FADE_MS / 2)).toBeLessThan(0.5);
+    f.update({ present: new Set([1]), now: FADE_MS + 30 });      // reappear
+    expect(f.alphaFor(1, FADE_MS + 30)).toBe(1);
+  });
 });
