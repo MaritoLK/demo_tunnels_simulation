@@ -31,7 +31,12 @@ _lock = threading.RLock()
 @contextmanager
 def read():
     """Acquire for read. Blocks if a writer holds the lock *on a different
-    thread*. Same-thread re-entry succeeds immediately (RLock semantics)."""
+    thread*. Same-thread re-entry succeeds immediately (RLock semantics).
+
+    Also serializes against other readers on different threads — RLock has
+    no shared-read mode. Acceptable while there is exactly one reader
+    (the tick_loop thread); upgrade to a real RW lock if a second reader
+    path appears."""
     _lock.acquire()
     try:
         yield
