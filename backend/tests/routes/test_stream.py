@@ -29,3 +29,13 @@ def test_stream_emits_frame_per_publish(app, client):
     broadcaster.publish({'tick': 42, 'hello': 'world'})
     t.join(timeout=2.0)
     assert results.get('payload') == {'tick': 42, 'hello': 'world'}
+    # After the consumer returns (explicit early return inside the generator
+    # iterator), the route's `finally: unsubscribe` must have run. The
+    # broadcaster's subscriber list is shared module state; if the route
+    # leaked a subscription, Task 5's autouse fixture would clear it between
+    # tests but the contract here is that the route itself cleans up.
+    time.sleep(0.1)
+    with broadcaster._subscribers_lock:
+        assert broadcaster._subscribers == [], (
+            'SSE route leaked a subscriber — finally block did not unsubscribe'
+        )
