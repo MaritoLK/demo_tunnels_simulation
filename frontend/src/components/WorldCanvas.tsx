@@ -28,7 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../api/client';
 import type { Agent, Colony } from '../api/types';
-import { useAgents, useColonies, useSimulation, useWorld } from '../api/queries';
+import { useAgents, useColonies, useSimulation, useWorld, useWorldStream } from '../api/queries';
 import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
 import { isReducedMotion } from '../state/reducedMotion';
@@ -98,6 +98,7 @@ export function WorldCanvas() {
   const world = useWorld();
   const agents = useAgents();
   const colonies = useColonies();
+  const { snapshot: streamSnap } = useWorldStream();
   const zoom = useViewStore((s) => s.zoom);
   const cameraX = useViewStore((s) => s.cameraX);
   const cameraY = useViewStore((s) => s.cameraY);
@@ -112,17 +113,21 @@ export function WorldCanvas() {
   const tilePx = BASE_TILE_PX * zoom;
 
   // Keep the snapshot ref in sync with the latest server + view state.
+  // Prefer SSE stream data when available; fall back to poll-based queries.
   useEffect(() => {
     if (!world.data) {
       snapRef.current = null;
       return;
     }
+    const effectiveAgents = streamSnap?.agents ?? agents.data ?? [];
+    const effectiveSim = streamSnap?.sim ?? sim.data;
+    const effectiveColonies = streamSnap?.colonies ?? colonies.data ?? [];
     snapRef.current = {
       width: world.data.width,
       height: world.data.height,
       tiles: world.data.tiles,
-      agents: agents.data ?? [],
-      colonies: colonies.data ?? [],
+      agents: effectiveAgents,
+      colonies: effectiveColonies,
       tilePx,
       cameraX,
       cameraY,
@@ -132,10 +137,18 @@ export function WorldCanvas() {
       // the OS preference can toggle while the app is running, and
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
-      currentTick: sim.data?.tick ?? 0,
-      phase: sim.data?.phase,
+      currentTick: effectiveSim?.tick ?? 0,
+      serverNowMs: effectiveSim?.server_time_ms,
+      phase: effectiveSim?.phase,
     };
-  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick, sim.data?.phase]);
+    if (rendererRef.current && effectiveSim?.server_time_ms != null) {
+      rendererRef.current.ingestSnapshot?.({
+        serverTimeMs: effectiveSim.server_time_ms,
+        tick: effectiveSim.tick,
+        agents: effectiveAgents.map((a: { id: number; x: number; y: number }) => ({ id: a.id, x: a.x, y: a.y })),
+      });
+    }
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data, streamSnap]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {

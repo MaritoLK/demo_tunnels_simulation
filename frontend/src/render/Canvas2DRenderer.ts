@@ -37,7 +37,8 @@ import {
   type SpriteAtlas,
 } from './spriteAtlas';
 import { FRAME_MS, FRAMES_PER_CYCLE, STATE_ICON_MAP } from './animConfig';
-import { easeOutCubic } from './ease';
+import { InterpBuffer } from './interpBuffer';
+import { LifecycleFade } from './lifecycleFade';
 
 interface AnimState {
   variant: PawnVariant;
@@ -135,23 +136,16 @@ export class Canvas2DRenderer implements Renderer {
   // the procedural rect renderer (during load, on load failure, in
   // tests where the assets aren't bundled).
   private sprites: SpriteAtlas | null = null;
-  // Tick-interpolation state. All of it lives on the renderer because
-  // "how to fill the gap between two poll snapshots" is a rendering
-  // concern, not a simulation one — the engine only hands us integer
-  // tile positions.
-  //   prevPositions      — agent positions at the last tick boundary;
-  //                        lerped toward the snapshot's current position.
-  //   lastSeenPositions  — rolling shadow of positions seen on the
-  //                        most recent frame. Becomes prev on tick-advance.
-  //   lastSeenTick       — most recent tick we drew (-1 = never).
-  //   lastTickBoundaryAt — performance.now() when we last saw a tick advance.
-  //   pollIntervalMs     — EMA of inter-poll delta, seeded from the React
-  //                        Query poll interval. Controls lerp speed.
-  private prevPositions = new Map<number, { x: number; y: number }>();
-  private lastSeenPositions = new Map<number, { x: number; y: number }>();
-  private lastSeenTick = -1;
-  private lastTickBoundaryAt = 0;
-  private pollIntervalMs = 500;
+  // Interpolation + lifecycle state — delegated to purpose-built classes.
+  //   interpBuffer    — 2-snapshot ring; sampleAt(renderTimeMs) produces
+  //                     per-agent interpolated positions.
+  //   fade            — per-agent in/alive/out lifecycle, drives alpha.
+  //   lastFrameSample — positions produced by the most recent sampleAt call;
+  //                     used by the anim-state loop next frame to detect
+  //                     motion (run vs idle variant). Replaces prevPositions.
+  private interpBuffer = new InterpBuffer();
+  private fade = new LifecycleFade();
+  private lastFrameSample: Map<number, { x: number; y: number }> = new Map();
   // Per-agent animation state — lazily created on first sight.
   // Swept at end of each draw so departed/dead agents don't accumulate.
   private animStates: Map<number, AnimState> = new Map();
@@ -200,58 +194,36 @@ export class Canvas2DRenderer implements Renderer {
     this.ctx.imageSmoothingEnabled = false;
   }
 
+  /** Push a new server snapshot into the interpolation buffer.
+   *  Called by WorldCanvas whenever a stream or poll snapshot arrives. */
+  ingestSnapshot(snap: { serverTimeMs: number; tick: number; agents: Array<{ id: number; x: number; y: number }> }): void {
+    this.interpBuffer.push(snap);
+  }
+
   drawFrame(snap: FrameSnapshot): void {
     if (!this.canvas || !this.ctx) return;
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, selectedTile, reducedMotion, currentTick,
+      selectedAgentId, selectedTile, reducedMotion,
     } = snap;
 
-    // Tick-advance bookkeeping for inter-poll interpolation. Runs
-    // before any drawing so the agent loop below can read a consistent
-    // (prevPositions, alpha) pair.
+    // Sample the interpolation buffer at render-time. The render time
+    // is server_time_ms - INTERP_DELAY_MS, which keeps renderTime between
+    // two known snapshots — always interpolating measured truths rather
+    // than extrapolating past the newest one.
     const now = performance.now();
-    const tickAdvanced = currentTick > this.lastSeenTick;
-    if (tickAdvanced && this.lastSeenTick >= 0) {
-      // Take the positions we drew last frame as the "prev" for this
-      // tick, then measure how long the previous tick window actually
-      // lasted so the lerp speed tracks real polling cadence.
-      this.prevPositions = new Map(this.lastSeenPositions);
-      const delta = now - this.lastTickBoundaryAt;
-      // Bound the EMA: a laptop that sleeps for a minute shouldn't
-      // pin the pollInterval at 60s. 3s covers 1 Hz sim speed with
-      // plenty of slack; anything longer is dropped from the EMA —
-      // pollIntervalMs keeps its last known value, not a reseed.
-      // Consequence after a long sleep: the stale value persists
-      // until the next sub-3s tick advance reseeds it. alpha clamps
-      // to [0, 1] so the user never sees bogus positions — worst
-      // case is one poll's worth of bodies pinned at target on wake,
-      // then normal interpolation resumes. Explicit reseed via Page
-      // Visibility listener considered and deferred: not observable
-      // in demo conditions, more surface than the symptom justifies.
-      if (delta > 0 && delta < 3000) {
-        this.pollIntervalMs = this.pollIntervalMs * 0.7 + delta * 0.3;
-      }
-      this.lastTickBoundaryAt = now;
-    } else if (this.lastSeenTick < 0) {
-      // Very first frame — no history, no animation to unwind.
-      this.lastTickBoundaryAt = now;
-    }
-    this.lastSeenTick = currentTick;
+    const INTERP_DELAY_MS = 100;
+    const sampleTimeMs = snap.serverNowMs != null
+      ? snap.serverNowMs - INTERP_DELAY_MS
+      : now - INTERP_DELAY_MS;
+    const sample = this.interpBuffer.sampleAt(sampleTimeMs);
 
-    // Prune dead/departed ids from both maps so there's no ghost draw
-    // on subsequent frames and no slow memory bloat.
+    // Present ids = whoever the buffer is producing a position for
+    // (includes departed-and-pinned). LifecycleFade decides fade state.
     const presentIds = new Set<number>();
-    for (const a of agents) presentIds.add(a.id);
-    for (const id of Array.from(this.lastSeenPositions.keys())) {
-      if (!presentIds.has(id)) this.lastSeenPositions.delete(id);
-    }
-    for (const id of Array.from(this.prevPositions.keys())) {
-      if (!presentIds.has(id)) this.prevPositions.delete(id);
-    }
-
-    const alpha = Math.max(0, Math.min(1, (now - this.lastTickBoundaryAt) / this.pollIntervalMs));
+    for (const id of sample.positions.keys()) presentIds.add(id);
+    this.fade.update({ present: presentIds, now });
 
     // Frame-cycling: compute dt from wall-clock delta between drawFrame calls.
     // dt = 0 on the very first frame (lastFrameAt = 0) so no phantom advance.
@@ -262,7 +234,7 @@ export class Canvas2DRenderer implements Renderer {
     // Must run before the agent draw loop (below) which reads animStates.
     for (const agent of agents) {
       if (!agent.alive) continue;
-      const prev = this.prevPositions.get(agent.id);
+      const prev = this.lastFrameSample.get(agent.id);
       const wantVariant = pickVariant(agent, prev);
 
       let anim = this.animStates.get(agent.id);
@@ -477,30 +449,14 @@ export class Canvas2DRenderer implements Renderer {
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
     for (const a of agents) {
-      // Body position = interpolated between prev (last tick boundary)
-      // and current (this tick's target). Halo + selection ring stay
-      // on the target tile so hit-tests match the visual anchor.
-      // Snap if the agent moved more than one tile in a single tick
-      // window (teleport, multi-step tick batch) — sliding them
-      // through intermediate tiles would look like they're phasing
-      // through walls, worse than a crisp cut.
-      const prev = this.prevPositions.get(a.id);
-      let bodyX = a.x;
-      let bodyY = a.y;
-      if (prev && !reducedMotion) {
-        const dx = a.x - prev.x;
-        const dy = a.y - prev.y;
-        // Widened from 2 → 8: allow a 2-tile straight or √8 diagonal
-        // step to interpolate instead of snapping. An observed delta of
-        // that size is more likely network jitter than a legitimate
-        // multi-tile teleport. Anything beyond that is treated as a true
-        // teleport and cut (e.g. post-regeneration respawn).
-        if (dx * dx + dy * dy <= 8) {
-          const eased = easeOutCubic(alpha);
-          bodyX = prev.x + dx * eased;
-          bodyY = prev.y + dy * eased;
-        }
-      }
+      // Body position: use InterpBuffer sample when motion is enabled.
+      // reducedMotion bypasses the buffer entirely — draw at the exact
+      // server-reported tile. LifecycleFade drives alpha (fade in/out).
+      const p = sample.positions.get(a.id);
+      const reducedBypass = reducedMotion;
+      const bodyX = reducedBypass ? a.x : (p?.x ?? a.x);
+      const bodyY = reducedBypass ? a.y : (p?.y ?? a.y);
+      const lifecycleAlpha = this.fade.alphaFor(a.id, now);
       const cx = bodyX * tilePx + tilePx / 2;
       const cy = bodyY * tilePx + tilePx / 2;
       const targetCx = a.x * tilePx + tilePx / 2;
@@ -563,19 +519,12 @@ export class Canvas2DRenderer implements Renderer {
         const pawnH = tilePx * (srcH / srcW);
         const pawnX = cx - pawnW / 2;
         const pawnY = cy + tilePx * 0.5 - pawnH;
-        if (!a.alive) {
-          ctx.save();
-          ctx.globalAlpha = 0.35;
-          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-          ctx.restore();
-        } else if (traversing) {
-          ctx.save();
-          ctx.globalAlpha = 0.75;
-          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-          ctx.restore();
-        } else {
-          ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-        }
+        ctx.save();
+        if (!a.alive) ctx.globalAlpha = 0.35 * lifecycleAlpha;
+        else if (traversing) ctx.globalAlpha = 0.75 * lifecycleAlpha;
+        else ctx.globalAlpha = lifecycleAlpha;
+        ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+        ctx.restore();
       } else {
         // Procedural fallback body + outline + gloss highlight.
         ctx.fillStyle = a.alive ? healthColour(a.health) : '#3a3f55';
@@ -728,10 +677,11 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Fold the frame's positions into the rolling shadow map — next
-    // tick-advance turns this into prevPositions.
-    for (const a of agents) {
-      this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
+    // Snapshot the interpolated positions so next frame's anim-state loop
+    // can detect motion (run vs idle variant) via lastFrameSample.
+    this.lastFrameSample.clear();
+    for (const [id, pos] of sample.positions) {
+      this.lastFrameSample.set(id, { x: pos.x, y: pos.y });
     }
 
     // Sweep departed agents from animStates to prevent unbounded growth.
@@ -755,11 +705,9 @@ export class Canvas2DRenderer implements Renderer {
     this.host = null;
     this.lastWidthPx = -1;
     this.lastHeightPx = -1;
-    this.prevPositions.clear();
-    this.lastSeenPositions.clear();
+    this.lastFrameSample.clear();
     this.animStates.clear();
     this.lastFrameAt = 0;
-    this.lastSeenTick = -1;
   }
 
   private _drawStateIcon(
