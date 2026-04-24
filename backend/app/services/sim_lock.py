@@ -30,7 +30,8 @@ _lock = threading.RLock()
 
 @contextmanager
 def read():
-    """Acquire for read. Blocks if a writer holds the lock."""
+    """Acquire for read. Blocks if a writer holds the lock *on a different
+    thread*. Same-thread re-entry succeeds immediately (RLock semantics)."""
     _lock.acquire()
     try:
         yield
@@ -40,7 +41,8 @@ def read():
 
 @contextmanager
 def write():
-    """Acquire for write. Excludes concurrent readers AND other writers."""
+    """Acquire for write. Excludes concurrent readers AND other writers
+    *on different threads*. Same-thread re-entry succeeds immediately."""
     _lock.acquire()
     try:
         yield

@@ -20,7 +20,7 @@ from app.engine.simulation import Simulation, new_simulation
 from app.engine import config as engine_config, cycle
 from app.engine.colony import EngineColony
 
-from . import mappers
+from . import mappers, sim_lock
 from .exceptions import SimulationNotFoundError
 
 
@@ -148,65 +148,66 @@ def create_simulation(width, height, seed=None, agent_count=0,
             f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
         )
 
-    try:
-        db.session.query(models.Event).delete()
-        db.session.query(models.Agent).delete()
-        db.session.query(models.WorldTile).delete()
-        db.session.query(models.Colony).delete()
-        db.session.query(models.SimulationState).delete()
-        db.session.flush()
-
-        if colonies and agents_per_colony is not None:
-            engine_colonies = _build_default_colonies(width, height, colonies)
-            colony_rows = [mappers.colony_to_row(c) for c in engine_colonies]
-            db.session.add_all(colony_rows)
+    with sim_lock.write():
+        try:
+            db.session.query(models.Event).delete()
+            db.session.query(models.Agent).delete()
+            db.session.query(models.WorldTile).delete()
+            db.session.query(models.Colony).delete()
+            db.session.query(models.SimulationState).delete()
             db.session.flush()
-            for c, row in zip(engine_colonies, colony_rows):
-                c.id = row.id
 
-            sim = new_simulation(
-                width, height, seed=seed,
-                colonies=engine_colonies,
-                agents_per_colony=agents_per_colony,
+            if colonies and agents_per_colony is not None:
+                engine_colonies = _build_default_colonies(width, height, colonies)
+                colony_rows = [mappers.colony_to_row(c) for c in engine_colonies]
+                db.session.add_all(colony_rows)
+                db.session.flush()
+                for c, row in zip(engine_colonies, colony_rows):
+                    c.id = row.id
+
+                sim = new_simulation(
+                    width, height, seed=seed,
+                    colonies=engine_colonies,
+                    agents_per_colony=agents_per_colony,
+                )
+            else:
+                sim = new_simulation(
+                    width, height, seed=seed,
+                    agent_count=agent_count,
+                )
+
+            # Demo bootstrap: skip the opening dawn window so press-play starts
+            # in the 'day' phase. Without this, a fresh sim spends the first
+            # TICKS_PER_PHASE ticks on eat/rest/step-to-camp routines — visually
+            # sleepy for an interview demo. Engine tests that construct their
+            # own Simulation directly are untouched (this offset lives at the
+            # service seam, not in engine.simulation).
+            sim.current_tick = cycle.TICKS_PER_PHASE
+
+            tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
+            db.session.add_all(tile_rows)
+
+            agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
+            db.session.add_all(agent_rows)
+            db.session.flush()
+            for agent, row in zip(sim.agents, agent_rows):
+                agent.id = row.id
+
+            state = models.SimulationState(
+                current_tick=sim.current_tick,
+                running=False, speed=1.0,
+                world_width=width, world_height=height,
+                seed=seed,
+                **_rng_state_columns(sim),
             )
-        else:
-            sim = new_simulation(
-                width, height, seed=seed,
-                agent_count=agent_count,
-            )
+            db.session.add(state)
 
-        # Demo bootstrap: skip the opening dawn window so press-play starts
-        # in the 'day' phase. Without this, a fresh sim spends the first
-        # TICKS_PER_PHASE ticks on eat/rest/step-to-camp routines — visually
-        # sleepy for an interview demo. Engine tests that construct their
-        # own Simulation directly are untouched (this offset lives at the
-        # service seam, not in engine.simulation).
-        sim.current_tick = cycle.TICKS_PER_PHASE
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
-        tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
-        db.session.add_all(tile_rows)
-
-        agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
-        db.session.add_all(agent_rows)
-        db.session.flush()
-        for agent, row in zip(sim.agents, agent_rows):
-            agent.id = row.id
-
-        state = models.SimulationState(
-            current_tick=sim.current_tick,
-            running=False, speed=1.0,
-            world_width=width, world_height=height,
-            seed=seed,
-            **_rng_state_columns(sim),
-        )
-        db.session.add(state)
-
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
-
-    _current_sim = sim
+        _current_sim = sim
     return sim
 
 
@@ -228,43 +229,44 @@ def step_simulation(ticks=1):
         raise ValueError(
             f'ticks={ticks} exceeds MAX_TICKS_PER_STEP={MAX_TICKS_PER_STEP}'
         )
-    sim = get_current_simulation()
-    try:
-        events = sim.run(ticks)
+    with sim_lock.read():
+        sim = get_current_simulation()
+        try:
+            events = sim.run(ticks)
 
-        event_rows = [mappers.event_to_row(e) for e in events]
-        db.session.add_all(event_rows)
+            event_rows = [mappers.event_to_row(e) for e in events]
+            db.session.add_all(event_rows)
 
-        dirty_tile_coords = {
-            (e['data']['tile_x'], e['data']['tile_y'])
-            for e in events
-            if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
-        }
-        if dirty_tile_coords:
-            _update_dirty_tiles(sim, dirty_tile_coords)
+            dirty_tile_coords = {
+                (e['data']['tile_x'], e['data']['tile_y'])
+                for e in events
+                if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
+            }
+            if dirty_tile_coords:
+                _update_dirty_tiles(sim, dirty_tile_coords)
 
-        dirty_colony_ids = {
-            e['data']['colony_id']
-            for e in events
-            if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
-        }
-        if dirty_colony_ids:
-            _update_dirty_colonies(sim, dirty_colony_ids)
+            dirty_colony_ids = {
+                e['data']['colony_id']
+                for e in events
+                if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
+            }
+            if dirty_colony_ids:
+                _update_dirty_colonies(sim, dirty_colony_ids)
 
-        _update_agents(sim)
+            _update_agents(sim)
 
-        state = _load_state_row()
-        state.current_tick = sim.current_tick
-        rng_cols = _rng_state_columns(sim)
-        state.rng_spawn_state = rng_cols['rng_spawn_state']
-        state.rng_tick_state = rng_cols['rng_tick_state']
+            state = _load_state_row()
+            state.current_tick = sim.current_tick
+            rng_cols = _rng_state_columns(sim)
+            state.rng_spawn_state = rng_cols['rng_spawn_state']
+            state.rng_tick_state = rng_cols['rng_tick_state']
 
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
-    return events
+        return events
 
 
 def load_current_simulation():
