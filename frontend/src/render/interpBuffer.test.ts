@@ -24,6 +24,14 @@ describe('InterpBuffer', () => {
     expect(pos.alphaRaw).toBeCloseTo(0.5, 5);
   });
 
+  it('returns older snap exactly when renderTime === older.serverTimeMs', () => {
+    const buf = new InterpBuffer();
+    buf.push(snap(1000, 1, [{ id: 1, x: 0, y: 0 }]));
+    buf.push(snap(2000, 2, [{ id: 1, x: 10, y: 0 }]));
+    const out = buf.sampleAt(1000);
+    expect(out.positions.get(1)).toEqual({ x: 0, y: 0, alphaRaw: 0 });
+  });
+
   it('pins to older snap when renderTime is before buffer', () => {
     const buf = new InterpBuffer();
     buf.push(snap(1000, 1, [{ id: 1, x: 0, y: 0 }]));
