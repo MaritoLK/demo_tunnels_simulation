@@ -93,6 +93,13 @@ export function WorldCanvas() {
   // seed + same dims) the world is byte-for-byte the same, so keeping
   // their view is correct.
   const fittedWorldSigRef = useRef<string | null>(null);
+  // Tracks the last server_time_ms we pushed into the renderer's
+  // interpolation buffer. Without this, any change in the snap-building
+  // useEffect deps (zoom, pan, selection) re-pushes the same snapshot
+  // and evicts the older one — InterpBuffer ends up holding two copies
+  // of the same instant, span=0, and every agent snaps to target until
+  // the next genuine tick arrives. Dedup by server timestamp here.
+  const lastIngestedServerMsRef = useRef<number>(-1);
 
   const sim = useSimulation();
   const world = useWorld();
@@ -141,7 +148,12 @@ export function WorldCanvas() {
       serverNowMs: effectiveSim?.server_time_ms,
       phase: effectiveSim?.phase,
     };
-    if (rendererRef.current && effectiveSim?.server_time_ms != null) {
+    if (
+      rendererRef.current
+      && effectiveSim?.server_time_ms != null
+      && effectiveSim.server_time_ms !== lastIngestedServerMsRef.current
+    ) {
+      lastIngestedServerMsRef.current = effectiveSim.server_time_ms;
       rendererRef.current.ingestSnapshot?.({
         serverTimeMs: effectiveSim.server_time_ms,
         tick: effectiveSim.tick,
