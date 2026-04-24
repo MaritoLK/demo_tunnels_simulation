@@ -27,6 +27,9 @@ export class LifecycleFade {
   }
 
   update({ present, now }: { present: Set<number>; now: number }): void {
+    // The two loops below operate on disjoint key sets by construction:
+    // `present` (loop 1) and `!present.has(id)` (loop 2). Don't pass an id
+    // in `present` that also needs fading out — there's no such state.
     // Transition in / confirm alive
     for (const id of present) {
       const e = this.map.get(id);
@@ -56,8 +59,9 @@ export class LifecycleFade {
     if (!e) return 0;
     const dt = now - e.startedAt;
     if (e.state === 'alive') return 1;
+    // easeOutCubic clamps to [0, 1] internally, so we don't pre-clamp here.
     if (e.state === 'in') return easeOutCubic(dt / FADE_MS);
     // state === 'out'
-    return 1 - easeOutCubic(Math.min(1, dt / FADE_MS));
+    return 1 - easeOutCubic(dt / FADE_MS);
   }
 }
