@@ -5,8 +5,6 @@ scripts/repro_put_race.py."""
 import threading
 import time
 
-import pytest
-
 from app.services import simulation_service
 
 
@@ -17,7 +15,8 @@ def _create_small_sim():
     )
 
 
-def test_put_during_tick_does_not_raise_fk(app):
+def test_put_during_tick_does_not_raise_fk(app, db_session):
+    del db_session  # fixture triggers TRUNCATE + cache reset; no direct use
     with app.app_context():
         _create_small_sim()
 
