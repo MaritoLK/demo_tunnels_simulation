@@ -20,6 +20,8 @@
 //
 // Mutations invalidate `['worldState']` — the one key all slices read
 // from — so create/step fire a single refetch instead of four.
+import { useEffect, useRef, useState } from 'react';
+
 import {
   keepPreviousData,
   useMutation,
@@ -29,6 +31,7 @@ import {
 } from '@tanstack/react-query';
 
 import { ApiError, apiGet, apiSend } from './client';
+import { connectWorldStream, type StreamStatus } from './stream';
 import type {
   Agent,
   Colony,
@@ -206,9 +209,6 @@ export function useSimControl() {
     },
   });
 }
-
-import { useEffect, useRef, useState } from 'react';
-import { connectWorldStream, type StreamStatus } from './stream';
 
 /** Subscribe to the SSE stream. Returns latest snapshot + connection status.
  *  When status flips to 'fallback', the caller should switch back to the
