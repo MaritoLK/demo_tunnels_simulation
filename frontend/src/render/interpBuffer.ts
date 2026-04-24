@@ -50,6 +50,11 @@ export class InterpBuffer {
       return { positions: new Map(), newlyPresent: [], departed: [], tick: -1 };
     }
     if (this.buf.length === 1) {
+      // Buffer not yet warm (first snapshot only). Return the single
+      // known truth fully opaque. alphaRaw: 1 is NOT a lerp progress
+      // signal here — there's nothing to lerp between — it just means
+      // "display as drawn." LifecycleFade still runs its own 250ms
+      // fade-in on top because this is each id's first appearance.
       const only = this.buf[0];
       const positions = new Map<number, { x: number; y: number; alphaRaw: number }>();
       for (const a of only.agents) positions.set(a.id, { x: a.x, y: a.y, alphaRaw: 1 });
