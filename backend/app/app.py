@@ -49,6 +49,9 @@ def create_app():
 
     app.register_blueprint(simulation_bp, url_prefix="/api/v1")
 
+    from app.routes.stream import bp as stream_bp
+    app.register_blueprint(stream_bp, url_prefix='/api/v1')
+
     _register_error_handlers(app)
 
     # Start the background tick loop unless explicitly disabled (tests set
