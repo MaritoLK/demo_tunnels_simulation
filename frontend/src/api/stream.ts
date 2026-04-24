@@ -25,6 +25,7 @@ export function connectWorldStream<T = unknown>(opts: StreamOpts<T>): StreamConn
   const fallbackAt = opts.fallbackAfterFailures ?? 5;
   let failures = 0;
   let es: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
 
   const open = () => {
@@ -32,10 +33,12 @@ export function connectWorldStream<T = unknown>(opts: StreamOpts<T>): StreamConn
     opts.onStatus(failures === 0 ? 'connecting' : 'reconnecting');
     es = new EventSource(opts.url);
     es.onopen = () => {
+      if (closed) return;
       failures = 0;
       opts.onStatus('connected');
     };
     es.onmessage = (e: MessageEvent) => {
+      if (closed) return;
       try {
         opts.onMessage(JSON.parse(e.data) as T);
       } catch {
@@ -45,6 +48,10 @@ export function connectWorldStream<T = unknown>(opts: StreamOpts<T>): StreamConn
       }
     };
     es.onerror = () => {
+      // Guard against a browser-queued error firing after close(). Without
+      // this, an unmounted component would still see status transitions
+      // for a connection it has already torn down.
+      if (closed) return;
       failures += 1;
       es?.close();
       if (failures >= fallbackAt) {
@@ -53,8 +60,10 @@ export function connectWorldStream<T = unknown>(opts: StreamOpts<T>): StreamConn
       }
       opts.onStatus('reconnecting');
       // Browsers already auto-reconnect. We close + reopen to ensure a
-      // fresh connection attempt with our own backoff.
-      setTimeout(open, Math.min(5000, 200 * 2 ** failures));
+      // fresh connection attempt with our own backoff. Retain the handle
+      // so close() can clearTimeout — otherwise the callback still fires
+      // (and bails on `closed`) but wastes one scheduler slot.
+      reconnectTimer = setTimeout(open, Math.min(5000, 200 * 2 ** failures));
     };
   };
 
@@ -63,6 +72,10 @@ export function connectWorldStream<T = unknown>(opts: StreamOpts<T>): StreamConn
   return {
     close() {
       closed = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       es?.close();
     },
   };

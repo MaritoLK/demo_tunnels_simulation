@@ -58,4 +58,27 @@ describe('connectWorldStream', () => {
     expect(statuses[statuses.length - 1]).toBe('fallback');
     conn.close();
   });
+
+  it('suppresses onerror/onmessage/onopen after close()', () => {
+    const statuses: StreamStatus[] = [];
+    const messages: unknown[] = [];
+    const conn = connectWorldStream({
+      url: '/api/v1/world/stream',
+      onMessage: m => messages.push(m),
+      onStatus: s => statuses.push(s),
+    });
+    const es = FakeEventSource.instances[0];
+    es.onopen?.(new Event('open'));
+    conn.close();
+    // All post-close callbacks must no-op.
+    const statusesAtClose = [...statuses];
+    const messagesAtClose = [...messages];
+    es.onerror?.(new Event('error'));
+    es.onmessage?.({ data: JSON.stringify({ tick: 99 }) } as MessageEvent);
+    es.onopen?.(new Event('open'));
+    expect(statuses).toEqual(statusesAtClose);
+    expect(messages).toEqual(messagesAtClose);
+    // No new EventSource instance was created (reconnect didn't fire).
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
 });
