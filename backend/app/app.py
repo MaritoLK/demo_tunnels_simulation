@@ -57,7 +57,22 @@ def create_app():
     # Start the background tick loop unless explicitly disabled (tests set
     # DISABLE_TICK_LOOP=1 so the loop doesn't mutate DB state while the
     # test client is driving it via POST /step). See §9.27.
-    if not os.environ.get("DISABLE_TICK_LOOP"):
+    #
+    # Skip in the debug-reloader parent. Flask's reloader runs `create_app`
+    # twice: once in the parent (file-watching only), once in the child
+    # (where `WERKZEUG_RUN_MAIN=true` and HTTP requests are actually
+    # served). Two tick threads across two processes would each keep their
+    # own `_current_sim` while sharing the DB — a PUT served by the child
+    # refreshes only the child's cache, so the parent's tick keeps emitting
+    # events with stale agent ids → FK violations. Surfaced by
+    # scripts/repro_put_race.py in dev. Production (gunicorn, no reloader)
+    # is unaffected because WERKZEUG_RUN_MAIN isn't set there and the
+    # FLASK_DEBUG env gate isn't tripped.
+    reloader_parent = (
+        os.environ.get("FLASK_DEBUG") in ("1", "true")
+        and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+    )
+    if not os.environ.get("DISABLE_TICK_LOOP") and not reloader_parent:
         tick_loop.start(app)
 
     return app
