@@ -100,9 +100,12 @@ def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
     _consecutive_failures = 0
     try:
         sim = simulation_service.get_current_simulation()
-        control_after = simulation_service.get_simulation_control()
+        # Reuse the control dict from line 75 — a second read would hit the
+        # DB again AND open a consistency gap (a PATCH landing between the
+        # stepper commit and the broadcast would emit a snapshot whose
+        # running/speed reflect the future, not the tick that just ran).
         payload = {
-            'sim': serializers.simulation_summary(sim, control_after),
+            'sim': serializers.simulation_summary(sim, control),
             'world': serializers.world_to_dict(sim.world),
             'agents': [serializers.agent_to_dict(a) for a in sim.agents],
             'colonies': [
