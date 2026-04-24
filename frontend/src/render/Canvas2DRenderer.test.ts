@@ -275,7 +275,8 @@ describe('Canvas2DRenderer — tick interpolation', () => {
     }));
     expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(0, 2);
 
-    // Frame 3: half the poll window in — alpha≈0.5, body at ~0.5.
+    // Frame 3: half the poll window in — alpha≈0.5.
+    // easeOutCubic(0.5) = 1-(1-0.5)^3 = 0.875, so body is at ~0.875.
     ctxSpy.arc.mockClear();
     now = 500 + 250; // pollIntervalMs settled at 500
     r.drawFrame(makeSnap({
@@ -288,7 +289,7 @@ describe('Canvas2DRenderer — tick interpolation', () => {
       selectedAgentId: null,
       currentTick: 1,
     }));
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(0.5, 1);
+    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(0.875, 1);
 
     r.dispose();
   });

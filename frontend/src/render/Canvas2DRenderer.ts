@@ -37,6 +37,7 @@ import {
   type SpriteAtlas,
 } from './spriteAtlas';
 import { FRAME_MS, FRAMES_PER_CYCLE, STATE_ICON_MAP } from './animConfig';
+import { easeOutCubic } from './ease';
 
 interface AnimState {
   variant: PawnVariant;
@@ -489,9 +490,15 @@ export class Canvas2DRenderer implements Renderer {
       if (prev && !reducedMotion) {
         const dx = a.x - prev.x;
         const dy = a.y - prev.y;
-        if (dx * dx + dy * dy <= 2) {
-          bodyX = prev.x + dx * alpha;
-          bodyY = prev.y + dy * alpha;
+        // Widened from 2 → 8: allow a 2-tile straight or √8 diagonal
+        // step to interpolate instead of snapping. An observed delta of
+        // that size is more likely network jitter than a legitimate
+        // multi-tile teleport. Anything beyond that is treated as a true
+        // teleport and cut (e.g. post-regeneration respawn).
+        if (dx * dx + dy * dy <= 8) {
+          const eased = easeOutCubic(alpha);
+          bodyX = prev.x + dx * eased;
+          bodyY = prev.y + dy * eased;
         }
       }
       const cx = bodyX * tilePx + tilePx / 2;
