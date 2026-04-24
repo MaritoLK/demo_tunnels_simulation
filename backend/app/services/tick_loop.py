@@ -24,8 +24,9 @@ from flask import Flask
 
 from app import db
 
-from . import simulation_service
+from . import broadcaster, simulation_service
 from .exceptions import SimulationNotFoundError
+from app.routes import serializers
 
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,21 @@ def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
             _consecutive_failures = 0
         return PAUSED_POLL_INTERVAL
     _consecutive_failures = 0
+    try:
+        sim = simulation_service.get_current_simulation()
+        control_after = simulation_service.get_simulation_control()
+        payload = {
+            'sim': serializers.simulation_summary(sim, control_after),
+            'world': serializers.world_to_dict(sim.world),
+            'agents': [serializers.agent_to_dict(a) for a in sim.agents],
+            'colonies': [
+                serializers.colony_to_dict(c)
+                for c in sorted(sim.colonies.values(), key=lambda c: c.id)
+            ],
+        }
+        broadcaster.publish(payload)
+    except Exception:
+        logger.exception('tick_loop: broadcast failed — skipping this tick')
     speed = max(control['speed'], simulation_service.MIN_SPEED)
     return max(MIN_INTERVAL, 1.0 / speed)
 
