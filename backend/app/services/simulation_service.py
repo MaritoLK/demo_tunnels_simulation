@@ -13,6 +13,8 @@ restarts the state is re-loaded from DB on demand — the `snapshot_rng_state`
 bridge in `engine.simulation` preserves the §9.11 reproducibility contract
 across process boundaries.
 """
+import time as _time
+
 from sqlalchemy import tuple_
 
 from app import db, models
@@ -27,6 +29,8 @@ from .exceptions import SimulationNotFoundError
 # Single-process assumption. Drift possible if migrate + flask containers run
 # simultaneously (compose restart race). Re-evaluate for multi-worker.
 _current_sim = None
+
+_last_tick_ms: int = 0  # monotonic ms at which the most recent tick completed
 
 # One request cannot hold a transaction open for a million ticks. Cap the
 # per-call advance at MAX_TICKS_PER_STEP; the route layer rejects larger
@@ -97,6 +101,18 @@ def _reset_cache():
     """For tests and reload paths — clear the module-level cache."""
     global _current_sim
     _current_sim = None
+
+
+def _monotonic_ms() -> int:
+    """Monotonic clock in integer milliseconds. Safe for cross-tick
+    deltas — `time.monotonic()` is guaranteed non-decreasing across
+    calls in one process. We coerce to int so the wire shape is
+    trivially JSON-serializable without float precision surprises."""
+    return int(_time.monotonic() * 1000)
+
+
+def get_last_tick_ms() -> int:
+    return _last_tick_ms
 
 
 DEFAULT_COLONY_PALETTE = [
@@ -262,6 +278,8 @@ def step_simulation(ticks=1):
             state.rng_tick_state = rng_cols['rng_tick_state']
 
             db.session.commit()
+            global _last_tick_ms
+            _last_tick_ms = _monotonic_ms()
         except Exception:
             db.session.rollback()
             raise

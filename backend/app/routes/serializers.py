@@ -12,6 +12,7 @@ Field renames happen here (not in the engine or models):
     wire name describes what it is. See agent.py:69 for the slot default.
 """
 from app.engine import cycle
+from app.services import simulation_service
 
 
 def agent_to_dict(agent):
@@ -88,6 +89,8 @@ def simulation_summary(sim, control):
         'speed': control['speed'],
         'day': cycle.day_for(sim.current_tick),
         'phase': cycle.phase_for(sim.current_tick),
+        'server_time_ms': simulation_service._monotonic_ms(),
+        'tick_ms': simulation_service.get_last_tick_ms() or simulation_service._monotonic_ms(),
     }
 
 
