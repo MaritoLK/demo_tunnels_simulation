@@ -1,4 +1,4 @@
-import { STATE_ICON_MAP } from '../render/animConfig';
+import { STATE_VISUALS } from '../render/animConfig';
 import type { Agent, Colony } from '../api/types';
 
 const CARRY_MAX = 8;
@@ -49,7 +49,7 @@ export function AgentTooltip({ agent, colony, screenX, screenY }: Props) {
     TOOLTIP_W, TOOLTIP_H,
     viewportW, viewportH,
   );
-  const glyph = STATE_ICON_MAP[agent.state] ?? '';
+  const glyph = STATE_VISUALS[agent.state]?.glyph ?? '';
   const cargo = agent.cargo ?? 0;
 
   return (

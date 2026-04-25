@@ -36,7 +36,7 @@ import {
   type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
-import { FRAME_MS, FRAMES_PER_CYCLE, STATE_ICON_MAP } from './animConfig';
+import { FRAME_MS, FRAMES_PER_CYCLE, STATE_VISUALS } from './animConfig';
 import { InterpBuffer } from './interpBuffer';
 import { LifecycleFade } from './lifecycleFade';
 
@@ -77,24 +77,6 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
 // Mirrors backend needs.CARRY_MAX. Used to scale the cargo pip's size
 // so a nearly-full pouch reads visibly bigger than a couple of units.
 const CARRY_MAX = 8;
-
-// Action label styling — one short word per engine state, each tinted
-// distinctly so you can read what the colony is doing at a glance
-// without hovering each agent. Keys MUST match backend actions.STATE_*
-// strings (wire contract). Dead agents get no label — the fade already
-// reads as "stopped."
-const STATE_LABEL: Record<string, { text: string; color: string }> = {
-  foraging:    { text: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
-  resting:     { text: 'rest',    color: '#6b9bd4' }, // sky blue — calm
-  socialising: { text: 'social',  color: '#d870c9' }, // magenta — warmth
-  exploring:   { text: 'explore', color: '#5cbd4a' }, // green — go
-  traversing:  { text: 'trek',    color: '#c08a4a' }, // tan — terrain drag
-  planting:    { text: 'plant',   color: '#7ee070' }, // bright green — matches growing dot
-  harvesting:  { text: 'harvest', color: '#ffd23f' }, // gold — matches mature dot
-  depositing:  { text: 'deposit', color: '#4ec9d4' }, // cyan — inflow
-  eating:      { text: 'eat',     color: '#ff6b8a' }, // pink-red — appetite
-  idle:        { text: 'idle',    color: '#8a8a93' }, // muted grey
-};
 
 // Below this tile size the label is unreadable and just adds clutter.
 // Matched to the food-badge threshold (≥14 CSS px) so both overlays
@@ -598,8 +580,8 @@ export class Canvas2DRenderer implements Renderer {
       // the pawn sprite itself all compete for contrast). Skip dead
       // agents (their fade already says "stopped") and skip when the
       // tile is too small to render a readable glyph.
-      const meta = a.alive ? STATE_LABEL[a.state] : undefined;
-      if (meta && tilePx >= LABEL_MIN_TILE_PX) {
+      const meta = a.alive ? STATE_VISUALS[a.state] : undefined;
+      if (meta?.label && meta.color && tilePx >= LABEL_MIN_TILE_PX) {
         // Anchor above the colony halo: halo sits at cy - r*0.4 with
         // radius r*0.55, so its top is cy - 0.95*r. Labels at cy - 1.4*r
         // clear the halo by ~0.45r and don't collide with the cargo pip
@@ -611,9 +593,9 @@ export class Canvas2DRenderer implements Renderer {
         const labelY = cy - r * 1.4;
         ctx.lineWidth = Math.max(2, tilePx * 0.09);
         ctx.strokeStyle = 'rgba(10,12,18,0.85)';
-        ctx.strokeText(meta.text, cx, labelY);
+        ctx.strokeText(meta.label, cx, labelY);
         ctx.fillStyle = meta.color;
-        ctx.fillText(meta.text, cx, labelY);
+        ctx.fillText(meta.label, cx, labelY);
       }
 
       if (a.id === selectedAgentId) {
@@ -717,7 +699,7 @@ export class Canvas2DRenderer implements Renderer {
     baseY: number,
     phase: string,
   ): void {
-    const glyph = STATE_ICON_MAP[state] ?? '';
+    const glyph = STATE_VISUALS[state]?.glyph ?? '';
     if (!glyph) return;                   // draw-guard — no fillText('')
     ctx.save();
     ctx.globalAlpha = phase === 'night' ? 0.4 : 1.0;

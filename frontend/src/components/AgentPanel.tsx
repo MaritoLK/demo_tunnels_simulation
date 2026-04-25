@@ -10,7 +10,7 @@
 // the user's mental "open the inspector" gesture.
 import { useAgents } from '../api/queries';
 import { useViewStore } from '../state/viewStore';
-import { STATE_ICON_MAP } from '../render/animConfig';
+import { STATE_VISUALS } from '../render/animConfig';
 
 // Mirrors backend needs.CARRY_MAX. Duplicated at the wire boundary
 // (same pattern as FORAGE_SERVING in the renderer) — small scalar,
@@ -46,7 +46,7 @@ export function AgentPanel() {
         <dt>state</dt>
         <dd>
           <span className={`pill ${agent.alive ? 'pill--alive' : 'pill--dead'}`}>
-            {STATE_ICON_MAP[agent.state] ?? ''} {agent.alive ? agent.state : 'deceased'}
+            {STATE_VISUALS[agent.state]?.glyph ?? ''} {agent.alive ? agent.state : 'deceased'}
           </span>
           {agent.alive && agent.rogue && (
             <span
