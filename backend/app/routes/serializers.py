@@ -1,7 +1,11 @@
 """Wire-format translators: engine/ORM objects → JSON-safe dicts.
 
-Kept deliberately thin and stateless. Flask 2.x auto-JSON-ifies returned
-dicts, so routes just build and return these directly.
+Pure transformations: every field on the wire is computed from the
+function arguments, no module-level state, no service reach-through.
+Wall-clock fields (`server_time_ms`, `tick_ms`) arrive via the `time`
+parameter — the caller (route or tick_loop) decides when to sample.
+Flask 2.x auto-JSON-ifies returned dicts, so routes just build and
+return these directly.
 
 Field renames happen here (not in the engine or models):
   * Event DB column `event_type` is exposed on the wire as `type` —
@@ -12,7 +16,6 @@ Field renames happen here (not in the engine or models):
     wire name describes what it is. See agent.py:69 for the slot default.
 """
 from app.engine import cycle
-from app.services import simulation_service
 
 
 def agent_to_dict(agent):
@@ -71,12 +74,15 @@ def world_to_dict(world):
     }
 
 
-def simulation_summary(sim, control):
-    """Wire summary combining engine state (tick, agent counts) with the
-    DB-backed control flags (running, speed). `control` is the dict returned
-    by `simulation_service.get_simulation_control()` — passing it in rather
-    than re-reading here keeps this serializer pure and the DB touch in
-    one place.
+def simulation_summary(sim, control, time):
+    """Wire summary combining engine state (tick, agent counts), DB-backed
+    control flags (running, speed), and wall-clock fields.
+
+    All three inputs are passed in by the caller — this function reads
+    nothing from module-level state. `control` comes from
+    `simulation_service.get_simulation_control()`; `time` from
+    `simulation_service.time_snapshot()`. Caller-supplied arguments
+    keep the serializer pure and the time + DB touches in one place.
     """
     return {
         'tick': sim.current_tick,
@@ -89,8 +95,8 @@ def simulation_summary(sim, control):
         'speed': control['speed'],
         'day': cycle.day_for(sim.current_tick),
         'phase': cycle.phase_for(sim.current_tick),
-        'server_time_ms': simulation_service._monotonic_ms(),
-        'tick_ms': simulation_service.get_last_tick_ms() or simulation_service._monotonic_ms(),
+        'server_time_ms': time['server_time_ms'],
+        'tick_ms': time['tick_ms'],
     }
 
 

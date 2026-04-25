@@ -111,8 +111,26 @@ def _monotonic_ms() -> int:
     return int(_time.monotonic() * 1000)
 
 
-def get_last_tick_ms() -> int:
-    return _last_tick_ms
+def time_snapshot() -> dict:
+    """Wall-clock fields the wire summary needs, captured atomically.
+
+    Returns `{server_time_ms, tick_ms}`:
+      * server_time_ms — monotonic now.
+      * tick_ms        — monotonic instant at which the most recent
+                         tick committed; falls back to now if no tick
+                         has run yet (fresh sim, post-restart pre-tick).
+
+    Reads `_last_tick_ms` *before* `_monotonic_ms()` so a concurrent
+    tick committing between the two reads can't lift tick_ms past
+    server_time_ms. The captured last_tick is always ≤ the now that
+    follows it (monotonic clock + assignment ordering).
+    """
+    last_tick = _last_tick_ms
+    now = _monotonic_ms()
+    return {
+        'server_time_ms': now,
+        'tick_ms': last_tick or now,
+    }
 
 
 DEFAULT_COLONY_PALETTE = [

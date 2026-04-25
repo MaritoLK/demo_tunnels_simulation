@@ -104,8 +104,9 @@ def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
         # DB again AND open a consistency gap (a PATCH landing between the
         # stepper commit and the broadcast would emit a snapshot whose
         # running/speed reflect the future, not the tick that just ran).
+        time = simulation_service.time_snapshot()
         payload = {
-            'sim': serializers.simulation_summary(sim, control),
+            'sim': serializers.simulation_summary(sim, control, time),
             'world': serializers.world_to_dict(sim.world),
             'agents': [serializers.agent_to_dict(a) for a in sim.agents],
             'colonies': [

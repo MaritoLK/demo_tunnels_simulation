@@ -13,7 +13,8 @@ def test_simulation_summary_includes_server_time_ms(app, db_session):
             width=4, height=4, seed=1, agent_count=1,
         )
         control = simulation_service.get_simulation_control()
-        summary = serializers.simulation_summary(sim, control)
+        time = simulation_service.time_snapshot()
+        summary = serializers.simulation_summary(sim, control, time)
     assert 'server_time_ms' in summary
     assert 'tick_ms' in summary
     assert isinstance(summary['server_time_ms'], int)
