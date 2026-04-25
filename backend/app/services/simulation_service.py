@@ -37,6 +37,12 @@ _last_tick_ms: int = 0  # monotonic ms at which the most recent tick completed
 # values with 400 before they reach the service, this is defence-in-depth.
 MAX_TICKS_PER_STEP = 1000
 
+# Maximum colonies per simulation. Source of truth for both the route
+# layer's input cap and the service's camp-position guard. Bound to the
+# four corners supported by `_default_camp_positions` and the four
+# entries in DEFAULT_COLONY_PALETTE — keep all three in sync.
+MAX_COLONIES = 4
+
 
 def get_current_simulation():
     """Return the in-memory sim, rehydrating from DB if needed.
@@ -142,9 +148,9 @@ DEFAULT_COLONY_PALETTE = [
 
 
 def _default_camp_positions(width, height, n_colonies):
-    """Corner camps inset 3 tiles. Supports 1..4 colonies; raises for more."""
-    if n_colonies > 4:
-        raise ValueError(f'colonies={n_colonies} exceeds supported 4')
+    """Corner camps inset 3 tiles. Supports 1..MAX_COLONIES; raises for more."""
+    if n_colonies > MAX_COLONIES:
+        raise ValueError(f'colonies={n_colonies} exceeds supported {MAX_COLONIES}')
     corners = [(3, 3), (width - 4, 3), (3, height - 4), (width - 4, height - 4)]
     return corners[:n_colonies]
 
@@ -184,6 +190,10 @@ def create_simulation(width, height, seed=None, agent_count=0,
 
     with sim_lock.write():
         try:
+            # Delete order matters: each row references the next via FK
+            # (events → agents → colonies; world_tiles → colonies). Reverse
+            # order would FK-violate. SimulationState is parentless, last
+            # is fine.
             db.session.query(models.Event).delete()
             db.session.query(models.Agent).delete()
             db.session.query(models.WorldTile).delete()

@@ -106,7 +106,7 @@ def replace_simulation():
 
     colonies = _require_int(
         body.get('colonies'), 'colonies',
-        min=0, max=4, allow_none=True,
+        min=0, max=simulation_service.MAX_COLONIES, allow_none=True,
     )
     agents_per_colony = _require_int(
         body.get('agents_per_colony'), 'agents_per_colony',

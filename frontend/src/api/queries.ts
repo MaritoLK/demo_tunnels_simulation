@@ -48,7 +48,9 @@ const WORLD_STATE_KEY = ['worldState'] as const;
 // the brief and, paired with the nginx 1s micro-cache (§9.27d; nginx
 // requires integer-second TTL), means roughly every second poll is a
 // cache hit — DB sees ~1 req/s/sim regardless of viewer count.
-const POLL_INTERVAL_MS = 500;
+// Exported so EventLog's filtered-events query reuses the same cadence;
+// drift between the two would be a tuning bug waiting to happen.
+export const POLL_INTERVAL_MS = 500;
 
 function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;

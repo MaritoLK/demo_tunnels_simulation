@@ -7,12 +7,11 @@
 //     running. React Query's per-key cache keeps mode toggles cheap.
 import { useState } from 'react';
 
-import { useEvents, useLiveEvents, useSimulation } from '../api/queries';
+import { POLL_INTERVAL_MS, useEvents, useLiveEvents, useSimulation } from '../api/queries';
 import type { EventRow } from '../api/types';
 import { useViewStore } from '../state/viewStore';
 
 const LIMIT = 200;
-const POLL_INTERVAL_MS = 500;
 
 export function EventLog() {
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);

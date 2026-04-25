@@ -1,4 +1,4 @@
-import type { Phase } from '../api/types';
+import { TICKS_PER_PHASE, type Phase } from '../api/types';
 
 const PHASE_GLYPH: Record<Phase, string> = {
   dawn: '🌅',
@@ -6,8 +6,6 @@ const PHASE_GLYPH: Record<Phase, string> = {
   dusk: '🌆',
   night: '🌙',
 };
-
-const TICKS_PER_PHASE = 30;
 
 export function ClockWidget({
   day, phase, tick,

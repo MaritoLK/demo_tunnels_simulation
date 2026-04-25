@@ -31,7 +31,7 @@ export interface SampleResult {
   positions: Map<number, { x: number; y: number; alphaRaw: number }>;
   newlyPresent: number[];
   departed: number[];
-  /** The newer snap's tick (monotonic, suitable as a React key). */
+  /** The newer snap's tick — monotonic with respect to push order. */
   tick: number;
 }
 

@@ -121,7 +121,11 @@ def _register_error_handlers(app):
     def _internal(e):
         # Catch-all so the default Werkzeug traceback never leaks into
         # the response body. Traceback still goes to server logs.
+        # Under TESTING re-raise so pytest sees the real exception in
+        # the failure message instead of a generic 500-shaped JSON.
         logger.exception("unhandled exception")
+        if app.config.get("TESTING"):
+            raise
         return {"error": "internal server error"}, 500
 
 

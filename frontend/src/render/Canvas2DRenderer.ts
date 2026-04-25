@@ -23,7 +23,7 @@
 //     we fall back to the procedural rect-based render so there's no
 //     blank flash and tests don't require asset files.
 import type { Renderer, FrameSnapshot } from './Renderer';
-import type { Terrain } from '../api/types';
+import { CARRY_MAX, type Terrain } from '../api/types';
 import {
   HOUSE_FRAME_H,
   HOUSE_FRAME_W,
@@ -73,10 +73,6 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
   wood:  '#6b3e1a', // deep brown
   stone: '#d0d0d8', // light stone
 };
-
-// Mirrors backend needs.CARRY_MAX. Used to scale the cargo pip's size
-// so a nearly-full pouch reads visibly bigger than a couple of units.
-const CARRY_MAX = 8;
 
 // Below this tile size the label is unreadable and just adds clutter.
 // Matched to the food-badge threshold (≥14 CSS px) so both overlays

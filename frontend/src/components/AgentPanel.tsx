@@ -11,11 +11,7 @@
 import { useAgents } from '../api/queries';
 import { useViewStore } from '../state/viewStore';
 import { STATE_VISUALS } from '../render/animConfig';
-
-// Mirrors backend needs.CARRY_MAX. Duplicated at the wire boundary
-// (same pattern as FORAGE_SERVING in the renderer) — small scalar,
-// not worth a /config round-trip.
-const CARRY_MAX = 8;
+import { CARRY_MAX } from '../api/types';
 
 export function AgentPanel() {
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);

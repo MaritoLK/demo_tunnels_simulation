@@ -1,7 +1,5 @@
 import { STATE_VISUALS } from '../render/animConfig';
-import type { Agent, Colony } from '../api/types';
-
-const CARRY_MAX = 8;
+import { CARRY_MAX, type Agent, type Colony } from '../api/types';
 
 interface Props {
   agent: Agent;

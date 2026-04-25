@@ -2,6 +2,17 @@
 // Keep this file the single source of truth for the over-the-wire contract —
 // every other module importing Tile/Agent gets consistent types.
 
+// --- Wire-mirrored constants -------------------------------------------
+// Numeric constants whose canonical home is the backend; mirrored here so
+// UI code (cargo bars, phase progress, etc.) doesn't pluck literals at
+// every call site. If you change a backend value, update these too.
+
+// Maximum cargo per agent. Backend: backend/app/engine/needs.py CARRY_MAX.
+export const CARRY_MAX = 8;
+
+// Ticks per day/night phase. Backend: backend/app/engine/cycle.py TICKS_PER_PHASE.
+export const TICKS_PER_PHASE = 30;
+
 export type Terrain = 'grass' | 'water' | 'forest' | 'stone' | 'sand';
 export type ResourceType = 'food' | 'wood' | 'stone' | null;
 export type CropState = 'none' | 'growing' | 'mature';
