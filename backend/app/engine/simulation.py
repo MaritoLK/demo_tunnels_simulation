@@ -5,7 +5,7 @@ import random
 from .agent import Agent, tick_agent
 from .colony import EngineColony
 from .world import World
-from . import config, cycle
+from . import config, cycle, skill
 
 
 def _sub_seed(master, key):
@@ -148,7 +148,6 @@ class Simulation:
         return events
 
     def _refresh_fog(self, snapshot):
-        radius = config.REVEAL_RADIUS
         width = self.world.width
         height = self.world.height
         for agent in snapshot:
@@ -159,6 +158,11 @@ class Simulation:
             colony = self.colonies.get(agent.colony_id)
             if colony is None:
                 continue
+            # Per-agent reveal radius scales with their walk-skill
+            # tier — veteran scouts uncover a wider area than fresh
+            # spawns. Apprentice = 3x3, journeyman = 5x5, veteran =
+            # 7x7 (see engine.skill).
+            radius = skill.reveal_radius_for(agent.tiles_walked)
             ax, ay = agent.x, agent.y
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):

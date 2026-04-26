@@ -27,6 +27,12 @@ class Agent(db.Model):
     # as `rogue`: a reload otherwise re-rolls the demo's calibration.
     loner = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     cargo = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    # Lifetime tile steps. Drives the walk-skill tier table that
+    # scales fog reveal radius (see engine/skill.py). Persisted so a
+    # reload preserves a veteran agent's wider sight.
+    tiles_walked = db.Column(
+        db.Integer, nullable=False, default=0, server_default='0',
+    )
     colony_id = db.Column(
         db.Integer,
         db.ForeignKey('colonies.id', ondelete='SET NULL'),

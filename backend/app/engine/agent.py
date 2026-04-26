@@ -26,6 +26,7 @@ class Agent:
         'cargo',
         'last_decision_reason',
         'food_memory',
+        'tiles_walked',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -76,6 +77,12 @@ class Agent:
         # so a long run doesn't grow the slot unbounded; in-memory only
         # for now (re-fills naturally on the next successful forage).
         self.food_memory = []
+        # Lifetime tile-step counter. Incremented in tick_agent each
+        # time a decision actually moved the agent. Drives the walk-
+        # skill tier that scales fog reveal radius (1 → 2 → 3) — a
+        # veteran scout uncovers a wider area than a freshly-spawned
+        # one. Persisted on the row so reloads keep the tier intact.
+        self.tiles_walked = 0
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
@@ -258,6 +265,13 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     agent.last_decision_reason = decision.reason
     pre_x, pre_y = agent.x, agent.y
     events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
+    # Walk-skill counter: lifetime steps drive the reveal-radius tier.
+    # Increment only on a successful position change so the metric
+    # tracks distance travelled, not turns spent — an agent stuck on a
+    # high-cost tile (move_cooldown > 0) doesn't get credit for a step
+    # they didn't actually take.
+    if (agent.x, agent.y) != (pre_x, pre_y):
+        agent.tiles_walked += 1
 
     # Wolf hazard: bite only on entry, not while standing still. Without
     # the entry check, an agent who can't reach safe ground would die in

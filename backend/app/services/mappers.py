@@ -21,6 +21,7 @@ def agent_to_row(agent):
         loner=agent.loner,
         colony_id=agent.colony_id,
         cargo=agent.cargo,
+        tiles_walked=agent.tiles_walked,
     )
 
 
@@ -36,6 +37,7 @@ def row_to_agent(row):
     a.rogue = row.rogue
     a.loner = row.loner
     a.cargo = row.cargo
+    a.tiles_walked = row.tiles_walked
     return a
 
 
@@ -60,6 +62,7 @@ def update_agent_row(row, engine_agent):
     row.rogue = engine_agent.rogue
     row.loner = engine_agent.loner
     row.cargo = engine_agent.cargo
+    row.tiles_walked = engine_agent.tiles_walked
 
 
 def tile_to_row(tile):
