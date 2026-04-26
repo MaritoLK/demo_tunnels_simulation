@@ -11,7 +11,7 @@ deltas via dirty-colony set after the step returns.
 class EngineColony:
     __slots__ = ('id', 'name', 'color', 'camp_x', 'camp_y',
                  'food_stock', 'growing_count', 'sprite_palette',
-                 'explored')
+                 'explored', 'last_reproduction_tick', 'agent_name_counter')
 
     def __init__(self, id, name, color, camp_x, camp_y,
                  food_stock, growing_count=0, sprite_palette='Blue'):
@@ -23,13 +23,23 @@ class EngineColony:
         self.food_stock = food_stock
         self.growing_count = growing_count
         self.sprite_palette = sprite_palette
-        # Set of (x, y) tiles this colony has revealed since the last
-        # fog reset. Refilled per tick from each non-rogue agent's
-        # reveal radius; cleared at the dusk → night phase boundary so
-        # the colony must re-explore each new day. In-memory only —
-        # demo restarts naturally re-fog the map. Persistence can be
-        # added later if it earns its keep.
+        # Cumulative set of (x, y) tiles this colony has revealed.
+        # Refilled per tick from each non-rogue agent's reveal radius.
+        # In-memory only — demo restarts naturally re-fog the map.
         self.explored = set()
+        # Tick of the last successful dawn-meal reproduction, or None
+        # if no birth yet. Drives the REPRODUCTION_COOLDOWN_TICKS gate
+        # in Simulation._maybe_reproduce. In-memory only for the demo;
+        # restart re-arms reproduction immediately, which is fine.
+        self.last_reproduction_tick = None
+        # Monotonic counter for naming new agents born to this colony.
+        # Pre-fix the spawn used `f'{name}-{pop + 1}'` (current alive
+        # count) — when an agent died and another was born, the new one
+        # could re-use a dead agent's name. Using a never-decrementing
+        # counter prevents that. Bumped here on birth; the suffix
+        # equals counter at time of birth so names read 'Red-1, Red-2,
+        # Red-N...'.
+        self.agent_name_counter = 0
 
     def is_at_camp(self, x, y):
         return x == self.camp_x and y == self.camp_y

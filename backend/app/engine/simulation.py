@@ -164,6 +164,15 @@ class Simulation:
                 event['agent_id'] = agent.id
                 events.append(event)
 
+        # Dawn-meal reproduction. Runs AFTER the agent tick loop so the
+        # newborn enters the world at age=0 and skips the current tick's
+        # decision pass — they "rest" their first tick, joining the
+        # snapshot only on the next step. Avoids the surprising
+        # behaviour of a freshly-named child immediately deciding to
+        # eat at camp.
+        if phase == 'dawn':
+            events.extend(self._maybe_reproduce())
+
         # Fog reveal: each non-rogue alive agent paints its colony's
         # REVEAL_RADIUS square onto colony.explored. Run after the agent
         # tick loop so the reveal reflects where the agent actually
@@ -177,6 +186,89 @@ class Simulation:
             events.append(event)
         self.current_tick += 1
         return events
+
+    def _maybe_reproduce(self):
+        """Roll dawn-meal reproduction for each colony, return events.
+
+        See config.REPRODUCTION_* for tuning. The per-colony gate is:
+          * food_stock >= REPRODUCTION_FOOD_THRESHOLD
+          * REPRODUCTION_COOLDOWN_TICKS elapsed since last birth
+          * population < MAX_AGENTS_PER_COLONY
+          * at least one alive non-rogue colony agent on the camp tile
+
+        Why these gates: cooldown caps birth rate (otherwise a steady
+        food surplus would carpet the camp in ticks). Pop cap stops
+        unbounded growth. The midwife requirement keeps the trigger
+        tied to an actual home presence — pre-design the user
+        considered the both-on-camp socialise gate but the diagnostic
+        showed that fired only 4 times in 1500 ticks; the single
+        midwife is much more reliable.
+        """
+        born_events = []
+        tick = self.current_tick
+        for colony in self.colonies.values():
+            if colony.id is None:
+                # Default synthesized colony (legacy test path) doesn't
+                # reproduce — keeps unit tests with no explicit colony
+                # untouched.
+                continue
+            if colony.food_stock < config.REPRODUCTION_FOOD_THRESHOLD:
+                continue
+            if (colony.last_reproduction_tick is not None
+                    and tick - colony.last_reproduction_tick
+                    < config.REPRODUCTION_COOLDOWN_TICKS):
+                continue
+            pop = sum(1 for a in self.agents
+                      if a.alive and a.colony_id == colony.id)
+            if pop >= config.MAX_AGENTS_PER_COLONY:
+                continue
+            # Midwife: at least one alive non-rogue colony member,
+            # location-agnostic. Pre-tuning we required them on (or
+            # adjacent to) the camp tile but the diagnostic showed
+            # agents are scattered in the field at most dawn ticks —
+            # only 3 births fired across 20 demo days. The colony as a
+            # whole is the social unit; any living non-rogue member
+            # carries the colony forward. The newborn still spawns AT
+            # the camp tile, so the visual is a 'baby appears at home'
+            # cue regardless of where the rest of the colony is.
+            midwife = next(
+                (a for a in self.agents
+                 if a.alive and not a.rogue
+                 and a.colony_id == colony.id),
+                None,
+            )
+            if midwife is None:
+                continue
+            # Spawn at camp. ID stays None — the persistence layer
+            # assigns when the agent first hits the DB on the next
+            # commit. Newborn starts well-fed/rested so they don't
+            # immediately starve. Name uses the colony's monotonic
+            # counter so names never collide across the colony's
+            # lifetime, even after deaths free up alive-slot indices.
+            colony.agent_name_counter += 1
+            child = Agent(
+                name=f'{colony.name}-{colony.agent_name_counter}',
+                x=colony.camp_x,
+                y=colony.camp_y,
+                colony_id=colony.id,
+            )
+            self.agents.append(child)
+            colony.food_stock -= config.REPRODUCTION_FOOD_COST
+            colony.last_reproduction_tick = tick
+            born_events.append({
+                'type': 'birthed',
+                'description': f'{child.name} was born at camp',
+                'tick': tick,
+                'agent_id': None,
+                'data': {
+                    'colony_id': colony.id,
+                    'midwife_name': midwife.name,
+                    'name': child.name,
+                    'tile_x': colony.camp_x,
+                    'tile_y': colony.camp_y,
+                },
+            })
+        return born_events
 
     def _refresh_fog(self, snapshot):
         width = self.world.width
@@ -263,6 +355,10 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
                 name = f'{colony.name}-{i + 1}'
                 a = Agent(name, colony.camp_x, colony.camp_y, colony_id=colony.id)
                 sim.agents.append(a)
+            # Seed the colony's name counter past the founders so the
+            # first newborn picks up Red-5 (or whatever) instead of
+            # colliding with Red-1..Red-4.
+            colony.agent_name_counter = agents_per_colony
     else:
         for i in range(agent_count):
             sim.spawn_agent(f'{agent_name_prefix}-{i + 1}')

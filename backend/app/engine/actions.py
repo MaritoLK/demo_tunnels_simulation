@@ -467,12 +467,20 @@ def explore(agent, world, colony=None, *, rng):
     }
 
 
-def die(agent):
+def die(agent, cause='starvation'):
+    """Mark an agent dead and emit the canonical 'died' event.
+
+    The optional `cause` rides on the event payload so the renderer +
+    event log can discriminate between starvation, old age, and any
+    future death source. Default is 'starvation' — currently the only
+    way an agent's health crosses zero in tick_agent.
+    """
     agent.alive = False
     agent.state = STATE_DEAD
     return {
         'type': 'died',
-        'description': f'{agent.name} has died',
+        'description': f'{agent.name} has died ({cause})',
+        'data': {'cause': cause},
     }
 
 

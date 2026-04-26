@@ -256,7 +256,15 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     # common case where starvation drives health across the threshold
     # *this tick*.
     if agent.health <= 0:
-        events.append(actions.die(agent))
+        events.append(actions.die(agent, cause='starvation'))
+        return events
+
+    # Age-out: agents past MAX_AGE_TICKS die a natural death. Checked
+    # before need decay so the cause is unambiguous — an agent who
+    # ages out the same tick they would have starved gets a clean
+    # 'old age' event instead of fighting starvation for the credit.
+    if agent.age >= config.MAX_AGE_TICKS:
+        events.append(actions.die(agent, cause='old age'))
         return events
 
     # Dawn-eat flag is transient: cleared any tick that isn't in the dawn
@@ -282,7 +290,7 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     needs.apply_passive_social(agent, colony)
 
     if agent.health <= 0:
-        events.append(actions.die(agent))
+        events.append(actions.die(agent, cause='starvation'))
         return events
 
     # Terrain traversal cost: the agent is mid-crossing. Decay already ran

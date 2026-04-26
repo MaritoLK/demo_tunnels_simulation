@@ -32,3 +32,28 @@ FOOD_MEMORY_MAX = 3
 # agents planted anywhere they hit empty grass, including ON the camp
 # sprite — visually noisy and made fields impossible to read at a glance.
 PLANT_RADIUS_FROM_CAMP = 4
+
+# Reproduction (dawn-meal ritual). Triggered in simulation.step at dawn
+# when:
+#   * food_stock >= REPRODUCTION_FOOD_THRESHOLD (the colony has slack
+#     to feed a new mouth)
+#   * cooldown REPRODUCTION_COOLDOWN_TICKS has elapsed since last birth
+#   * population < MAX_AGENTS_PER_COLONY
+#   * at least one alive non-rogue colony agent stands on the camp tile
+#     (the 'midwife' — without it the trigger would fire even when
+#     everyone is in the field)
+# Cost: REPRODUCTION_FOOD_COST debited from food_stock. Pre-tuning for
+# a 5-min demo (1500 ticks ≈ 12.5 days): cooldown of ~2 days = 6 births
+# per colony per demo. Pop cap stops runaway growth.
+REPRODUCTION_FOOD_THRESHOLD = 30
+REPRODUCTION_FOOD_COST = 10
+REPRODUCTION_COOLDOWN_TICKS = 240
+MAX_AGENTS_PER_COLONY = 12
+
+# Natural death by old age. Checked in tick_agent before the need-decay
+# pass so age-out and starvation deaths can't fight for the same tick
+# — the cause field discriminates them. 1800 ticks ≈ 15 in-game days
+# at TICKS_PER_DAY=120, so a freshly-born agent lives roughly the
+# duration of a long demo before timing out. Tunable: shorter for more
+# generational churn, longer for stable populations.
+MAX_AGE_TICKS = 1800
