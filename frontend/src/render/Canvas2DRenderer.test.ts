@@ -201,6 +201,96 @@ describe('Canvas2DRenderer — colony decorations', () => {
 });
 
 
+describe('Canvas2DRenderer — lifecycle fade applies to overlays', () => {
+  // Regression: lifecycleFade alpha used to apply only to the body
+  // sprite/disc. Halo, label, cargo pip, shadow stayed at full alpha
+  // during fade-in/out, producing 250 ms of "ghost body with fully
+  // opaque hovering halo + label" right after sim load — the visual
+  // contradiction lifecycleFade was supposed to prevent.
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+  });
+
+  function alphaCapturingSpy(): { spy: CtxSpy; alphaAt: Map<string, number[]> } {
+    const spy = makeCtxSpy();
+    const alphaAt = new Map<string, number[]>();
+    // Real canvas save/restore preserves globalAlpha; the default vi.fn()
+    // mocks do not. Without a state stack, an inner ctx.globalAlpha
+    // assignment leaks past the matching restore() and pollutes the
+    // outer wrap, so this test would lie about which alpha each draw
+    // call actually saw.
+    const stack: number[] = [];
+    spy.save = vi.fn(() => { stack.push(spy.globalAlpha); });
+    spy.restore = vi.fn(() => {
+      const a = stack.pop();
+      if (a !== undefined) spy.globalAlpha = a;
+    });
+    const record = (key: string) => {
+      const arr = alphaAt.get(key) ?? [];
+      arr.push(spy.globalAlpha);
+      alphaAt.set(key, arr);
+    };
+    spy.fill = vi.fn(() => record('fill'));
+    spy.stroke = vi.fn(() => record('stroke'));
+    spy.fillText = vi.fn(() => record('fillText'));
+    return { spy, alphaAt };
+  }
+
+  it('label, halo, cargo pip, and shadow share lifecycleAlpha with the body', () => {
+    const { spy, alphaAt } = alphaCapturingSpy();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      () => spy as unknown as CanvasRenderingContext2D,
+    );
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(64, 64);
+    r.drawFrame(makeSnap({
+      // Big enough to render the label (LABEL_MIN_TILE_PX = 14).
+      tilePx: 32,
+      colonies: [
+        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0, sprite_palette: 'Red' },
+      ],
+      agents: [
+        {
+          id: 7,
+          name: 'Test-Agent',
+          x: 0,
+          y: 0,
+          health: 100,
+          hunger: 80,
+          energy: 80,
+          social: 80,
+          age: 0,
+          state: 'foraging',
+          alive: true,
+          colony_id: 1,
+          cargo: 4,
+          decision_reason: '',
+        },
+      ],
+      selectedAgentId: null,
+    }));
+    // First render = lifecycle fade-in just started, so alpha = 0. The
+    // label, the colony halo, the cargo pip, and the shadow ellipse must
+    // all draw at < 1 globalAlpha — proving they sit inside the same
+    // lifecycle wrap as the body sprite/disc.
+    const labelAlphas = alphaAt.get('fillText') ?? [];
+    expect(labelAlphas.length).toBeGreaterThan(0);
+    for (const a of labelAlphas) expect(a).toBeLessThan(1);
+
+    const fills = alphaAt.get('fill') ?? [];
+    // At least one overlay-class fill (shadow, cargo pip, gloss, halo)
+    // had to land at < 1 alpha — pre-fix every one of these was 1.
+    expect(fills.some((a) => a < 1)).toBe(true);
+
+    r.dispose();
+  });
+});
+
+
 describe('pickVariant', () => {
   const baseAgent = { state: 'exploring', x: 1, y: 1, cargo: 0 };
 

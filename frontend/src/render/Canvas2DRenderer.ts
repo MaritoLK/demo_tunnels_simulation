@@ -445,6 +445,17 @@ export class Canvas2DRenderer implements Renderer {
       // resource pips — can't tell them apart at a glance.
       const r = Math.max(4, tilePx * 0.4);
 
+      // One outer save/restore per agent so lifecycleAlpha applies to
+      // the whole stack — body, shadow, halo, label, cargo pip, state
+      // icon, selection ring. Without this, only the body sprite/disc
+      // faded in/out and the overlays stayed fully opaque, producing
+      // ~250 ms of "ghost body with hovering opaque label" right after
+      // sim load. The body block's own save/restore composes fine: it
+      // overwrites globalAlpha (e.g. 0.35 * lifecycleAlpha for dead),
+      // then restores back to lifecycleAlpha — overlays inherit it.
+      ctx.save();
+      ctx.globalAlpha = lifecycleAlpha;
+
       // Shadow on the ground tile for diorama depth.
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.beginPath();
@@ -653,6 +664,7 @@ export class Canvas2DRenderer implements Renderer {
           ctx.restore();
         }
       }
+      ctx.restore();
     }
 
     // Snapshot the interpolated positions so next frame's anim-state loop
@@ -698,7 +710,11 @@ export class Canvas2DRenderer implements Renderer {
     const glyph = STATE_VISUALS[state]?.glyph ?? '';
     if (!glyph) return;                   // draw-guard — no fillText('')
     ctx.save();
-    ctx.globalAlpha = phase === 'night' ? 0.4 : 1.0;
+    // Compose night-dim with whatever alpha the caller already pushed
+    // (lifecycleAlpha at the per-agent wrap, or 1.0 outside it). A bare
+    // assignment would clobber the lifecycle fade and snap the icon to
+    // full opacity even while its agent is still fading in.
+    if (phase === 'night') ctx.globalAlpha *= 0.4;
     ctx.font = '18px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffffff';
