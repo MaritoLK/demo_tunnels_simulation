@@ -26,7 +26,14 @@ class Agent(db.Model):
     # transitions land inside a demo window. Persisted for the same reason
     # as `rogue`: a reload otherwise re-rolls the demo's calibration.
     loner = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
-    cargo = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    # Three pouches: food / wood / stone. Total weight (food + 2*wood +
+    # 3*stone) is capped by needs.CARRY_MAX. Pre-refactor a single
+    # `cargo` column held the food count and gather_wood / gather_stone
+    # bypassed the agent entirely. The pouch loop is now uniform
+    # across all three resources — gather → carry → deposit at camp.
+    cargo_food = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    cargo_wood = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    cargo_stone = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
     # Lifetime tile steps. Drives the walk-skill tier table that
     # scales fog reveal radius (see engine/skill.py). Persisted so a
     # reload preserves a veteran agent's wider sight.

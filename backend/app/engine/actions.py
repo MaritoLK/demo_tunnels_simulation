@@ -26,6 +26,33 @@ TERRAIN_MOVE_COST = {
     'stone': 3,
 }
 
+
+def move_cost(tile, colony=None):
+    """Movement cost to enter `tile`. Honours depletion for forest /
+    stone — once the wood / stone resource on the tile is gone the
+    terrain reads as bare ground (cost 1, like grass). The user
+    wanted a chopped-out forest to walk like a clearing so the worker
+    loop produces visible "trails" through the map.
+
+    Sand keeps its slowdown regardless of resource state — the cost
+    there is the dune itself, not a harvestable feature, so depletion
+    doesn't apply.
+
+    `colony` is optional: when supplied, the colony's tier subtracts
+    from the cost (clamped at 1) so a tier-2 (Castle) colony walks
+    every terrain at grass speed. The fallback (None) returns the
+    raw terrain cost so unit tests with synthesized agents stay on
+    the tier-0 baseline.
+    """
+    if tile.terrain == 'forest' and (tile.resource_type != 'wood' or tile.resource_amount <= 0):
+        base = 1
+    elif tile.terrain == 'stone' and (tile.resource_type != 'stone' or tile.resource_amount <= 0):
+        base = 1
+    else:
+        base = TERRAIN_MOVE_COST.get(tile.terrain, 1)
+    reduction = config.tier_benefit(colony, 'move_cost_reduction')
+    return max(1, base - reduction)
+
 STATE_IDLE = 'idle'
 STATE_RESTING = 'resting'
 STATE_FORAGING = 'foraging'
@@ -36,6 +63,11 @@ STATE_PLANTING = 'planting'
 STATE_HARVESTING = 'harvesting'
 STATE_DEPOSITING = 'depositing'
 STATE_EATING = 'eating'
+# Distinct visuals for wood / stone gathering. The forage state was
+# overloaded for both pre-refactor; the user wanted "chopping" and
+# "mining" so the worker role reads at a glance.
+STATE_CHOPPING = 'chopping'
+STATE_MINING = 'mining'
 STATE_DEAD = 'dead'
 
 
@@ -137,11 +169,14 @@ def _bfs_first_reachable(agent, world, predicate):
     return None, None
 
 
-def step_toward(agent, target_x, target_y, world):
+def step_toward(agent, target_x, target_y, world, colony=None):
     """Move one tile along a shortest walkable path toward the target.
 
-    Returns True if the agent moved, False if no path exists within
-    PATH_SEARCH_HORIZON (caller typically falls back to random walk).
+    Returns True if the agent moved, False if no path exists.
+
+    `colony` flows through to `move_cost` so the agent's tier-scaled
+    movement bonus applies. Optional — caller-less unit tests get
+    the tier-0 baseline.
 
     Historical note: an earlier implementation picked greedily among
     two candidate axes and quit if both were blocked. That produced
@@ -166,7 +201,7 @@ def step_toward(agent, target_x, target_y, world):
         return False
     agent.x = nx
     agent.y = ny
-    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+    agent.move_cooldown = move_cost(dest_tile, colony) - 1
     return True
 
 
@@ -226,12 +261,13 @@ def _forage_yield_from_d20(rng):
     return roll, 5
 
 
-def forage(agent, world, *, rng):
+def forage(agent, world, *, rng, colony=None):
     # Honest-action guard: idle only when BOTH hunger and pouch are
     # full. A sated agent with empty cargo still forages (stockpiling
     # for the colony), and a hungry agent with a full pouch still
     # forages (the gather action feeds their own hunger regardless).
-    if agent.hunger >= needs.NEED_MAX and agent.cargo >= needs.CARRY_MAX:
+    cap = needs.carry_max_for(colony)
+    if agent.hunger >= needs.NEED_MAX and needs.cargo_weight(agent) >= cap:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
@@ -240,11 +276,13 @@ def forage(agent, world, *, rng):
         # nothing, and the dice add narrative variance (a crit-fail
         # forage takes home zero even when the tile is full). Tile
         # units only leave the world through a pouch slot or a mouth.
-        pouch_room = needs.CARRY_MAX - agent.cargo
+        # Food weighs 1 per unit so room (in food units) is just the
+        # remaining cap.
+        pouch_room = cap - needs.cargo_weight(agent)
         roll, ceiling = _forage_yield_from_d20(rng)
         taken = min(ceiling, tile.resource_amount, pouch_room)
         tile.resource_amount -= taken
-        agent.cargo += taken
+        agent.cargo_food += taken
         # Hunger fills regardless — the gather action doubles as eating
         # on the spot. The FORAGE_HUNGER_RESTORE constant is independent
         # of `taken` so a tile-starved forage still feeds the agent
@@ -291,14 +329,14 @@ def forage(agent, world, *, rng):
         lambda t: t.resource_type == 'food' and t.resource_amount > 0,
     )
     if step is None:
-        return explore(agent, world, rng=rng)
+        return explore(agent, world, colony, rng=rng)
 
     ddx, ddy = step
     nx, ny = agent.x + ddx, agent.y + ddy
     dest_tile = world.get_tile(nx, ny)
     agent.x = nx
     agent.y = ny
-    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+    agent.move_cooldown = move_cost(dest_tile, colony) - 1
     agent.state = STATE_FORAGING
     return {
         'type': 'moved',
@@ -306,13 +344,17 @@ def forage(agent, world, *, rng):
     }
 
 
-def rest(agent):
+def rest(agent, colony=None):
     # Honest-action guard: dawn phase routes full-energy agents here.
     # Without this, we emit a sham 'rested' event (and grant a heal bonus)
     # for an agent that did nothing.
     if agent.energy >= needs.NEED_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on energy'}
-    agent.energy = min(needs.NEED_MAX, agent.energy + needs.REST_ENERGY_RESTORE)
+    # Tier-scaled energy restore — at-camp rest gets bigger as the
+    # colony's infrastructure improves. Falls back to the base
+    # constant when no colony is supplied (tests, rogue rest).
+    bump = config.tier_benefit(colony, 'rest_energy')
+    agent.energy = min(needs.NEED_MAX, agent.energy + bump)
     # Rest while well-fed → extra health regen on top of the passive drip
     # in decay_needs. Strict-greater gate matches decay_needs so a single
     # threshold controls "is this agent fed enough to heal."
@@ -433,7 +475,7 @@ def explore(agent, world, colony=None, *, rng):
             dest_tile = world.get_tile(nx, ny)
             agent.x = nx
             agent.y = ny
-            agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+            agent.move_cooldown = move_cost(dest_tile, colony) - 1
             agent.state = STATE_EXPLORING
             return {
                 'type': 'moved',
@@ -464,8 +506,8 @@ def explore(agent, world, colony=None, *, rng):
         agent.state = STATE_IDLE
         return {'type': 'idled', 'description': f'{agent.name} stayed in place'}
     agent.x, agent.y = rng.choice(options)
-    dest_terrain = world.get_tile(agent.x, agent.y).terrain
-    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
+    dest_tile = world.get_tile(agent.x, agent.y)
+    agent.move_cooldown = move_cost(dest_tile, colony) - 1
     agent.state = STATE_EXPLORING
     return {
         'type': 'moved',
@@ -490,7 +532,7 @@ def die(agent, cause='starvation'):
     }
 
 
-def step_toward_mature_crop(agent, world):
+def step_toward_mature_crop(agent, world, colony=None):
     """BFS to nearest reachable mature crop tile, take one step.
 
     Mirrors the BFS-toward-food pattern in `forage`. Mature crops are
@@ -515,7 +557,7 @@ def step_toward_mature_crop(agent, world):
     dest_tile = world.get_tile(nx, ny)
     agent.x = nx
     agent.y = ny
-    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+    agent.move_cooldown = move_cost(dest_tile, colony) - 1
     agent.state = STATE_HARVESTING
     return {
         'type': 'moved',
@@ -640,24 +682,33 @@ def harvest(agent, world, colony):
 
 
 def gather_wood(agent, world, colony):
-    """Take GATHER_WOOD_AMOUNT off the wood tile under `agent` and credit
-    `colony.wood_stock` directly. No per-agent transport — agents act as
-    lumberjacks who deliver instantly to the colony stock for the demo.
+    """Chop wood from the tile under `agent` into the agent's pouch.
+
+    Wood weighs WOOD_WEIGHT per unit so a near-full pouch can be too
+    heavy to carry even one log — that case idles, the agent is
+    expected to head to camp via the cargo-full rung. Pouch is
+    drained at deposit time (not directly to colony.wood_stock) so
+    chopping is a real worker loop: gather → carry → drop off.
 
     Pre-conditions:
       * agent's own tile has resource_type == 'wood' and amount > 0
+      * pouch has room for at least 1 wood unit (WOOD_WEIGHT)
     Violations → idled no-op.
     """
     tile = world.get_tile(agent.x, agent.y)
     if tile.resource_type != 'wood' or tile.resource_amount <= 0:
         return {'type': 'idled', 'description': f'{agent.name} found no wood'}
-    taken = min(config.GATHER_WOOD_AMOUNT, tile.resource_amount)
+    pouch_room_weight = needs.carry_max_for(colony) - needs.cargo_weight(agent)
+    if pouch_room_weight < needs.WOOD_WEIGHT:
+        return {'type': 'idled', 'description': f'{agent.name} pouch full — no room for wood'}
+    units_room = pouch_room_weight / needs.WOOD_WEIGHT
+    taken = min(config.GATHER_WOOD_AMOUNT, tile.resource_amount, units_room)
     tile.resource_amount -= taken
-    colony.wood_stock += taken
-    agent.state = STATE_FORAGING
+    agent.cargo_wood += taken
+    agent.state = STATE_CHOPPING
     return {
         'type': 'gathered_wood',
-        'description': f'{agent.name} gathered wood at ({tile.x},{tile.y})',
+        'description': f'{agent.name} chopped wood at ({tile.x},{tile.y})',
         'data': {
             'tile_x': tile.x,
             'tile_y': tile.y,
@@ -669,17 +720,27 @@ def gather_wood(agent, world, colony):
 
 
 def gather_stone(agent, world, colony):
-    """Symmetric to `gather_wood` for stone tiles."""
+    """Mine stone from the tile under `agent` into the agent's pouch.
+
+    Stone weighs STONE_WEIGHT per unit (heaviest of the three) so a
+    pure stone trip ferries less mass than wood or food — visible
+    pacing pressure on the upgrade timeline. Same gather → carry →
+    deposit loop as gather_wood.
+    """
     tile = world.get_tile(agent.x, agent.y)
     if tile.resource_type != 'stone' or tile.resource_amount <= 0:
         return {'type': 'idled', 'description': f'{agent.name} found no stone'}
-    taken = min(config.GATHER_STONE_AMOUNT, tile.resource_amount)
+    pouch_room_weight = needs.carry_max_for(colony) - needs.cargo_weight(agent)
+    if pouch_room_weight < needs.STONE_WEIGHT:
+        return {'type': 'idled', 'description': f'{agent.name} pouch full — no room for stone'}
+    units_room = pouch_room_weight / needs.STONE_WEIGHT
+    taken = min(config.GATHER_STONE_AMOUNT, tile.resource_amount, units_room)
     tile.resource_amount -= taken
-    colony.stone_stock += taken
-    agent.state = STATE_FORAGING
+    agent.cargo_stone += taken
+    agent.state = STATE_MINING
     return {
         'type': 'gathered_stone',
-        'description': f'{agent.name} gathered stone at ({tile.x},{tile.y})',
+        'description': f'{agent.name} mined stone at ({tile.x},{tile.y})',
         'data': {
             'tile_x': tile.x,
             'tile_y': tile.y,
@@ -735,65 +796,80 @@ def upgrade_camp(agent, colony):
 
 
 def deposit_cargo(agent, colony):
-    """Drop the agent's foraged pouch into the colony's shared stock.
+    """Drop the agent's three pouches into the colony's matching stocks.
 
     Pre-conditions:
       * agent standing on the colony's camp tile
-      * agent.cargo > 0
+      * total cargo weight > 0 (any of food/wood/stone non-zero)
 
-    Violations → idled no-op. Success → colony.food_stock bumps by the
-    whole cargo value, agent.cargo resets to 0, emits 'deposited' with
-    the amount so the UI can flash the feedback.
+    Violations → idled no-op. Success → each non-empty pouch credits
+    the matching colony stock and resets to 0, emits 'deposited' with
+    a per-resource breakdown so the UI can flash the feedback.
     """
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
-    if agent.cargo <= 0:
+    if needs.cargo_weight(agent) <= 0:
         return {'type': 'idled', 'description': f'{agent.name} has nothing to deposit'}
-    amount = agent.cargo
-    colony.food_stock += amount
-    agent.cargo = 0.0
+    food = agent.cargo_food
+    wood = agent.cargo_wood
+    stone = agent.cargo_stone
+    colony.food_stock += food
+    colony.wood_stock += wood
+    colony.stone_stock += stone
+    agent.cargo_food = 0.0
+    agent.cargo_wood = 0.0
+    agent.cargo_stone = 0.0
     # Social bump for non-rogue agents — depositing is a natural
-    # "back home with food, tribe gathers around" moment. Without
+    # "back home with the haul, tribe gathers around" moment. Without
     # this the social need erodes monotonically until everyone goes
     # rogue (1500-tick diagnostic, 2026-04-26). Rogues skip — rogue
     # is a one-way collapse, going home doesn't reverse it.
     if not agent.rogue:
         agent.social = min(needs.NEED_MAX, agent.social + needs.DEPOSIT_SOCIAL_BUMP)
     agent.state = STATE_DEPOSITING
+    parts = []
+    if food:
+        parts.append(f'{food:g} food')
+    if wood:
+        parts.append(f'{wood:g} wood')
+    if stone:
+        parts.append(f'{stone:g} stone')
     return {
         'type': 'deposited',
-        'description': f'{agent.name} dropped off {amount:g} food',
+        'description': f'{agent.name} dropped off ' + ', '.join(parts),
         'data': {
             'agent_id': agent.id,
             'colony_id': colony.id,
-            'amount': amount,
+            'food': food,
+            'wood': wood,
+            'stone': stone,
         },
     }
 
 
 def eat_cargo(agent):
-    """Rogue's larder: consume one pouch unit, bump hunger.
+    """Pull one food unit out of the pouch, bump hunger.
 
-    Rogue agents have no camp to deposit or eat at. Without this action
-    a rogue who forages to full cargo can't spend any of it on their
-    own hunger — the forage action double-feeds during gather, but once
-    the agent is away from food tiles the cargo just sits unused.
+    Wood and stone aren't food — only cargo_food feeds the agent. An
+    agent holding wood / stone but no food is out of luck and idles.
+    The 1700-tick diagnostic on 2026-04-26 surfaced this when the
+    survival rung was extended to non-rogues; agents who stockpiled
+    wood/stone but no food still need to find a real meal.
 
     Pre-conditions:
-      * agent.cargo > 0
+      * agent.cargo_food > 0
       * agent.hunger < NEED_MAX
 
-    Consumes 1 unit. Hunger bumps by FORAGE_HUNGER_RESTORE — same as
-    the gather-time hunger restore so a cargo meal feels like a forage
-    meal. Caller (decide_action rogue branch) already gates on
-    HUNGER_MODERATE, so the strict-less-than guard here is defensive.
+    Consumes 1 food unit. Hunger bumps by FORAGE_HUNGER_RESTORE —
+    same as the gather-time hunger restore so a cargo meal feels
+    like a forage meal.
     """
-    if agent.cargo <= 0:
-        return {'type': 'idled', 'description': f'{agent.name} had nothing in their pouch'}
+    if agent.cargo_food <= 0:
+        return {'type': 'idled', 'description': f'{agent.name} had no food in their pouch'}
     if agent.hunger >= needs.NEED_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
-    taken = min(1.0, agent.cargo)
-    agent.cargo -= taken
+    taken = min(1.0, agent.cargo_food)
+    agent.cargo_food -= taken
     agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
     agent.state = STATE_EATING
     return {
@@ -820,7 +896,12 @@ def eat_camp(agent, colony):
     """
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
-    if colony.food_stock < config.EAT_COST:
+    # Eat cost is tier-scaled: tier 1 / 2 colonies feed agents for
+    # less food per meal. The user wanted at-camp benefits to scale
+    # with the upgrade arc — fewer food units per meal means a
+    # higher-tier colony can stretch its stockpile further.
+    eat_cost = config.tier_benefit(colony, 'eat_cost')
+    if colony.food_stock < eat_cost:
         return {'type': 'idled', 'description': f'{agent.name} found empty stock'}
     if agent.hunger >= needs.NEED_MAX:
         return {'type': 'idled', 'description': f'{agent.name} already full'}
@@ -829,7 +910,7 @@ def eat_camp(agent, colony):
 
     hunger_before = agent.hunger
     agent.hunger = needs.NEED_MAX
-    colony.food_stock -= config.EAT_COST
+    colony.food_stock -= eat_cost
     agent.ate_this_dawn = True
     agent.state = STATE_EATING
     return {
@@ -838,7 +919,7 @@ def eat_camp(agent, colony):
         'data': {
             'agent_id': agent.id,
             'colony_id': colony.id,
-            'amount': config.EAT_COST,
+            'amount': eat_cost,
             'hunger_before': hunger_before,
             'hunger_after': agent.hunger,
         },

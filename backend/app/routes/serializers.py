@@ -34,7 +34,9 @@ def agent_to_dict(agent):
         'colony_id': agent.colony_id,
         'rogue': agent.rogue,
         'loner': agent.loner,
-        'cargo': agent.cargo,
+        'cargo_food': agent.cargo_food,
+        'cargo_wood': agent.cargo_wood,
+        'cargo_stone': agent.cargo_stone,
         'decision_reason': agent.last_decision_reason,
     }
 

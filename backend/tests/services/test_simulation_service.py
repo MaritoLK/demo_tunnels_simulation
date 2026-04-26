@@ -404,7 +404,7 @@ def test_step_simulation_persists_deposit_stock_credit(db_session):
     agent.x, agent.y = colony.camp_x, colony.camp_y
     agent.hunger = needs.NEED_MAX
     agent.energy = needs.NEED_MAX
-    agent.cargo = 4.0
+    agent.cargo_food = 4.0
     for other in sim.agents:
         if other.colony_id == colony.id and other.id != agent.id:
             other.x, other.y = 0, 0

@@ -20,7 +20,9 @@ def agent_to_row(agent):
         rogue=agent.rogue,
         loner=agent.loner,
         colony_id=agent.colony_id,
-        cargo=agent.cargo,
+        cargo_food=agent.cargo_food,
+        cargo_wood=agent.cargo_wood,
+        cargo_stone=agent.cargo_stone,
         tiles_walked=agent.tiles_walked,
     )
 
@@ -36,7 +38,9 @@ def row_to_agent(row):
     a.alive = row.alive
     a.rogue = row.rogue
     a.loner = row.loner
-    a.cargo = row.cargo
+    a.cargo_food = row.cargo_food
+    a.cargo_wood = row.cargo_wood
+    a.cargo_stone = row.cargo_stone
     a.tiles_walked = row.tiles_walked
     return a
 
@@ -61,7 +65,9 @@ def update_agent_row(row, engine_agent):
     row.alive = engine_agent.alive
     row.rogue = engine_agent.rogue
     row.loner = engine_agent.loner
-    row.cargo = engine_agent.cargo
+    row.cargo_food = engine_agent.cargo_food
+    row.cargo_wood = engine_agent.cargo_wood
+    row.cargo_stone = engine_agent.cargo_stone
     row.tiles_walked = engine_agent.tiles_walked
 
 

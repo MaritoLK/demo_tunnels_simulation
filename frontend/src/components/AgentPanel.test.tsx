@@ -9,7 +9,8 @@ import type { Agent } from '../api/types';
 const baseAgent: Agent = {
   id: 1, name: 'Alice', x: 2, y: 2, state: 'foraging',
   hunger: 47, energy: 80, social: 65, health: 90, age: 12,
-  alive: true, colony_id: 1, rogue: false, loner: false, cargo: 2.5,
+  alive: true, colony_id: 1, rogue: false, loner: false,
+  cargo_food: 2.5, cargo_wood: 0, cargo_stone: 0,
   decision_reason: 'hunger < 50 → forage',
 };
 

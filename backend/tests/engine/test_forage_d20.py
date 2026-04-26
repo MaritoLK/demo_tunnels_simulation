@@ -62,7 +62,7 @@ def test_forage_event_carries_roll_and_taken():
     assert ev['type'] == 'foraged'
     assert ev['data']['roll'] == 13
     assert ev['data']['amount_taken'] == 2
-    assert a.cargo == 2
+    assert a.cargo_food == 2
 
 
 def test_forage_crit_fail_takes_zero_units():
@@ -79,7 +79,7 @@ def test_forage_crit_fail_takes_zero_units():
     assert ev['data']['roll'] == 1
     assert ev['data']['amount_taken'] == 0
     assert tile.resource_amount == pre_amount  # tile untouched
-    assert a.cargo == 0
+    assert a.cargo_food == 0
     # Hunger still ticks up — eating-on-the-spot doesn't depend on yield.
     assert a.hunger > 50.0
 
@@ -93,7 +93,7 @@ def test_forage_crit_takes_five_when_room_allows():
     ev = actions.forage(a, w, rng=_FixedRng(20))
     assert ev['data']['roll'] == 20
     assert ev['data']['amount_taken'] == 5
-    assert a.cargo == 5
+    assert a.cargo_food == 5
     assert tile.resource_amount == 5.0
 
 
@@ -102,10 +102,10 @@ def test_forage_yield_clamped_by_pouch_room_even_on_crit():
     from app.engine.agent import Agent
     a = Agent(name='A', x=0, y=0, agent_id=1, colony_id=1)
     a.hunger = 50.0
-    a.cargo = needs.CARRY_MAX - 2
+    a.cargo_food = needs.CARRY_MAX - 2
     w = _grass_world()
     tile = _food_at(w, 0, 0, 10.0)
     ev = actions.forage(a, w, rng=_FixedRng(20))
     assert ev['data']['roll'] == 20
     assert ev['data']['amount_taken'] == 2
-    assert a.cargo == needs.CARRY_MAX
+    assert a.cargo_food == needs.CARRY_MAX

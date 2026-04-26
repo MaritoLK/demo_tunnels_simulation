@@ -56,21 +56,28 @@ import yellowRunMeatUrl  from '../assets/tiny-swords/free/Units/Yellow Units/Paw
 // House sprites — 128×192 static per colony palette. Keyed by the
 // backend colony name (Red / Blue / Purple / Yellow — see
 // DEFAULT_COLONY_PALETTE in simulation_service.py). Three tiers per
-// palette: House1 = founders' shack (tier 0), House2 = upgraded
-// (tier 1), House3 = stately (tier 2). Indexed by colony.tier in
-// the renderer.
+// palette: House1 (founders' shack), Monastery (tier 1), Castle
+// (tier 2). Indexed by colony.tier in the renderer. The user asked
+// for the chained progression so the upgrade arc reads as a clear
+// civilisation jump rather than three slightly-different cottages.
 import houseRedT0Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House1.png';
-import houseRedT1Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House2.png';
-import houseRedT2Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House3.png';
+import houseRedT1Url from '../assets/tiny-swords/free/Buildings/Red Buildings/Monastery.png';
+import houseRedT2Url from '../assets/tiny-swords/free/Buildings/Red Buildings/Castle.png';
 import houseBlueT0Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House1.png';
-import houseBlueT1Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House2.png';
-import houseBlueT2Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House3.png';
+import houseBlueT1Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/Monastery.png';
+import houseBlueT2Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/Castle.png';
 import housePurpleT0Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House1.png';
-import housePurpleT1Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House2.png';
-import housePurpleT2Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House3.png';
+import housePurpleT1Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/Monastery.png';
+import housePurpleT2Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/Castle.png';
 import houseYellowT0Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House1.png';
-import houseYellowT1Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House2.png';
-import houseYellowT2Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House3.png';
+import houseYellowT1Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/Monastery.png';
+import houseYellowT2Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/Castle.png';
+// Tree / stump sprites for forest tiles. Tree1 is the leafy
+// pre-chop sprite; Stump2 is the chopped variant drawn when the
+// tile's wood resource has been depleted. Both 192×192 source
+// frames; centred draw matches the bush overlay convention.
+import treeUrl from '../assets/tiny-swords/free/Terrain/Resources/Wood/Trees/Tree1.png';
+import stumpUrl from '../assets/tiny-swords/free/Terrain/Resources/Wood/Trees/Stump 2.png';
 
 export type PawnVariant = 'idle' | 'run' | 'idleMeat' | 'runMeat';
 export type ColonyPalette = 'Red' | 'Blue' | 'Purple' | 'Yellow';
@@ -83,6 +90,13 @@ export interface SpriteAtlas {
   cropGrowing: HTMLImageElement;
   cropMature: HTMLImageElement;
   rock: HTMLImageElement;
+  // Forest tile decorations. `tree` shows on a wood-bearing forest
+  // tile (resource_amount > 0). `stump` replaces it once the tile
+  // is fully chopped — paired with the depleted-tile traversability
+  // change (forest underfoot is normally an extra-cost tile, but a
+  // chopped tile becomes plain grass for movement purposes).
+  tree: HTMLImageElement;
+  stump: HTMLImageElement;
   // Deprecated — the old single-pawn field. Kept for compatibility with
   // any render path that hasn't migrated to the per-palette lookup yet;
   // points at Blue idle so behavior is unchanged.
@@ -166,7 +180,7 @@ export async function loadSprites(): Promise<SpriteAtlas> {
   };
 
   const [
-    tilemap, water, meat, bush, cropGrowing, cropMature, rock,
+    tilemap, water, meat, bush, cropGrowing, cropMature, rock, tree, stump,
     redPawns, bluePawns, purplePawns, yellowPawns,
     redHouses, blueHouses, purpleHouses, yellowHouses,
   ] = await Promise.all([
@@ -177,6 +191,8 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     loadImage(cropGrowingUrl),
     loadImage(cropMatureUrl),
     loadImage(rockUrl),
+    loadImage(treeUrl),
+    loadImage(stumpUrl),
     loadPair({ idle: redIdleUrl,    run: redRunUrl,    idleMeat: redIdleMeatUrl,    runMeat: redRunMeatUrl }),
     loadPair({ idle: blueIdleUrl,   run: blueRunUrl,   idleMeat: blueIdleMeatUrl,   runMeat: blueRunMeatUrl }),
     loadPair({ idle: purpleIdleUrl, run: purpleRunUrl, idleMeat: purpleIdleMeatUrl, runMeat: purpleRunMeatUrl }),
@@ -188,7 +204,7 @@ export async function loadSprites(): Promise<SpriteAtlas> {
   ]);
 
   return {
-    tilemap, water, meat, bush, cropGrowing, cropMature, rock,
+    tilemap, water, meat, bush, cropGrowing, cropMature, rock, tree, stump,
     // legacy single-pawn field = Blue idle (Task 11 retires this)
     pawn: bluePawns.idle,
     pawns: {

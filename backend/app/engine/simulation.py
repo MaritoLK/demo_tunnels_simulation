@@ -220,7 +220,7 @@ class Simulation:
                 continue
             pop = sum(1 for a in self.agents
                       if a.alive and a.colony_id == colony.id)
-            if pop >= config.MAX_AGENTS_PER_COLONY:
+            if pop >= config.tier_benefit(colony, 'pop_cap'):
                 continue
             # Midwife: at least one alive non-rogue colony member,
             # location-agnostic. Pre-tuning we required them on (or

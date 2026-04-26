@@ -23,7 +23,7 @@ class Agent:
         'colony_id', 'ate_this_dawn',
         'move_cooldown',
         'rogue', 'loner',
-        'cargo',
+        'cargo_food', 'cargo_wood', 'cargo_stone',
         'last_decision_reason',
         'food_memory',
         'tiles_walked',
@@ -60,11 +60,16 @@ class Agent:
         # happen inside a short demo window. All other needs behave
         # normally.
         self.loner = False
-        # Units of food currently in the agent's pouch. 0..CARRY_MAX.
-        # Bumped by forage, drained by deposit_cargo at camp. Does NOT
-        # feed the agent's own hunger — that's the foraging side-effect
-        # that already fills hunger during the gather action.
-        self.cargo = 0.0
+        # Per-resource pouches. Combined weight (food*1 + wood*2 +
+        # stone*3) is capped at CARRY_MAX via needs.cargo_weight. Each
+        # resource has its own gather action (forage / gather_wood /
+        # gather_stone) and the camp deposit drains all three at once.
+        # Wood/stone don't feed the agent's hunger — only forage does
+        # the gather-time hunger restore — so eat_cargo pulls only
+        # from cargo_food.
+        self.cargo_food = 0.0
+        self.cargo_wood = 0.0
+        self.cargo_stone = 0.0
         # Populated per tick by tick_agent after decide_action. Empty string
         # before the first tick so serializer + UI can treat absence as
         # "no decision yet" without special-casing None.
@@ -134,11 +139,11 @@ def decide_action(agent, world, colony, phase) -> Decision:
         # 2026-04-26 caught 17 deaths where agents with full pouches
         # exhausted local food and died during the BFS-then-explore
         # fallback. Survival ranks above resource conservation.
-        if agent.cargo > 0:
+        if agent.cargo_food > 0:
             return Decision('eat_cargo', f'health < {hc} → eat from pouch')
         return Decision('forage', f'health < {hc} → forage to recover')
     if agent.hunger < needs.HUNGER_CRITICAL:
-        if agent.cargo > 0:
+        if agent.cargo_food > 0:
             return Decision('eat_cargo', f'hunger < {hu_c} → eat from pouch')
         return Decision('forage', f'hunger < {hu_c} → forage now')
     if agent.energy < needs.ENERGY_CRITICAL:
@@ -152,11 +157,14 @@ def decide_action(agent, world, colony, phase) -> Decision:
 
     # 3. At-camp opportunistic
     if at_camp:
-        if agent.cargo > 0:
-            return Decision('deposit', f'at camp, cargo {agent.cargo:.1f} → deposit')
+        if needs.cargo_weight(agent) > 0:
+            return Decision(
+                'deposit',
+                f'at camp, cargo weight {needs.cargo_weight(agent):.1f} → deposit',
+            )
         if (phase == 'dawn'
                 and agent.hunger < needs.NEED_MAX
-                and colony.food_stock >= config.EAT_COST
+                and colony.food_stock >= config.tier_benefit(colony, 'eat_cost')
                 and not agent.ate_this_dawn):
             return Decision('eat_camp', 'dawn at camp → eat stock')
         # Camp tier upgrade — agent at home with the colony having
@@ -176,7 +184,8 @@ def decide_action(agent, world, colony, phase) -> Decision:
         return Decision('step_to_camp', f'social < {sl} → head to camp')
 
     # 5. Cargo-full off-camp
-    if not agent.rogue and agent.cargo >= needs.CARRY_MAX:
+    cap = needs.carry_max_for(colony)
+    if not agent.rogue and needs.cargo_weight(agent) >= cap:
         return Decision('step_to_camp', 'cargo full → head to camp')
 
     # 6. Tile-local: harvest first (mature crops outrank wild food —
@@ -204,17 +213,22 @@ def decide_action(agent, world, colony, phase) -> Decision:
     # food for a multi-tick crop investment, and ABOVE the rogue
     # eat-from-pouch / tail rungs so it overrides "all needs ok →
     # explore".
-    if agent.cargo < needs.CARRY_MAX and actions.adjacent_food_tile(agent, world) is not None:
+    weight = needs.cargo_weight(agent)
+    if weight + needs.FOOD_WEIGHT <= cap and actions.adjacent_food_tile(agent, world) is not None:
         return Decision('forage', 'food in reach → forage on sight')
 
     # 7b. Own-tile wood / stone gather. Triggers when the agent
     # happens to be standing on a forest or stone tile during their
-    # explore route. Direct-to-stock (no per-agent transport) so the
-    # rung is just 'harvest underfoot'. Outranks plant — wood/stone
-    # is an immediate gain, plant is a multi-tick investment.
-    if tile.resource_type == 'wood' and tile.resource_amount > 0:
+    # explore route. Pouch must have room for at least one unit of
+    # the resource — wood costs 2 weight, stone 3, so a near-full
+    # food pouch can be too heavy to carry even one log. Outranks
+    # plant — wood/stone is an immediate gain, plant is a multi-tick
+    # investment.
+    if (tile.resource_type == 'wood' and tile.resource_amount > 0
+            and weight + needs.WOOD_WEIGHT <= cap):
         return Decision('gather_wood', 'wood underfoot → gather')
-    if tile.resource_type == 'stone' and tile.resource_amount > 0:
+    if (tile.resource_type == 'stone' and tile.resource_amount > 0
+            and weight + needs.STONE_WEIGHT <= cap):
         return Decision('gather_stone', 'stone underfoot → gather')
 
     # 8. Plant: empty tile + free field slot + within camp's field radius
@@ -225,7 +239,7 @@ def decide_action(agent, world, colony, phase) -> Decision:
         return Decision('plant', 'empty tile near camp → plant')
 
     # 9. Rogue eat-from-pouch
-    if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
+    if agent.rogue and agent.cargo_food > 0 and agent.hunger < needs.HUNGER_MODERATE:
         return Decision('eat_cargo', f'rogue, hunger < {hu_m} → eat from pouch')
 
     # 10. Tail
@@ -246,9 +260,9 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
     # wrote state at all, so a 💤 glyph followed the agent home.
     agent.state = actions.STATE_IDLE
     if action_name == 'forage':
-        return actions.forage(agent, world, rng=rng)
+        return actions.forage(agent, world, rng=rng, colony=colony)
     if action_name == 'rest':
-        return actions.rest(agent)
+        return actions.rest(agent, colony)
     if action_name == 'rest_outdoors':
         return actions.rest_outdoors(agent)
     if action_name == 'socialise':
@@ -272,7 +286,7 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
     if action_name == 'upgrade_camp':
         return actions.upgrade_camp(agent, colony)
     if action_name == 'step_to_camp':
-        moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world)
+        moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world, colony)
         if moved:
             # Mid-trek visual: agent is moving with purpose. Renderer
             # maps STATE_EXPLORING to a green '?' glyph — close enough
@@ -283,7 +297,7 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
             'description': f'{agent.name} headed toward camp',
         }
     if action_name == 'step_to_harvest':
-        return actions.step_toward_mature_crop(agent, world)
+        return actions.step_toward_mature_crop(agent, world, colony)
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 

@@ -57,7 +57,10 @@ def _agent(x, y):
 # ---- gather_wood / gather_stone ------------------------------------------
 
 
-def test_gather_wood_drains_tile_and_credits_colony():
+def test_gather_wood_drains_tile_and_credits_pouch():
+    # Post-multi-resource refactor: gather_wood credits the agent's
+    # cargo_wood pouch, not the colony directly. Colony stock fills
+    # only when the agent deposits at camp.
     a = _agent(8, 5)
     w = _world()
     tile = w.get_tile(8, 5)
@@ -65,12 +68,13 @@ def test_gather_wood_drains_tile_and_credits_colony():
     tile.resource_type = 'wood'
     tile.resource_amount = 5.0
     colony = _colony()
-    pre_stock = colony.wood_stock
+    pre_pouch = a.cargo_wood
     pre_tile = tile.resource_amount
     ev = actions.gather_wood(a, w, colony)
     assert ev['type'] == 'gathered_wood'
     assert tile.resource_amount == pre_tile - config.GATHER_WOOD_AMOUNT
-    assert colony.wood_stock == pre_stock + config.GATHER_WOOD_AMOUNT
+    assert a.cargo_wood == pre_pouch + config.GATHER_WOOD_AMOUNT
+    assert colony.wood_stock == 0, 'colony stock must wait for deposit'
 
 
 def test_gather_wood_idles_off_wood_tile():
@@ -93,7 +97,7 @@ def test_gather_wood_idles_on_depleted_wood_tile():
     assert ev['type'] == 'idled'
 
 
-def test_gather_stone_drains_tile_and_credits_colony():
+def test_gather_stone_drains_tile_and_credits_pouch():
     a = _agent(2, 5)
     w = _world()
     tile = w.get_tile(2, 5)
@@ -103,7 +107,8 @@ def test_gather_stone_drains_tile_and_credits_colony():
     colony = _colony()
     ev = actions.gather_stone(a, w, colony)
     assert ev['type'] == 'gathered_stone'
-    assert colony.stone_stock == config.GATHER_STONE_AMOUNT
+    assert a.cargo_stone == config.GATHER_STONE_AMOUNT
+    assert colony.stone_stock == 0, 'colony stock must wait for deposit'
 
 
 # ---- can_upgrade gate ----------------------------------------------------
@@ -215,7 +220,7 @@ def test_deposit_outranks_upgrade_at_camp():
     next_cost = config.UPGRADE_TIER_COSTS[1]
     colony = _colony(wood=next_cost['wood'], stone=next_cost['stone'])
     a = _agent(5, 5)
-    a.cargo = 4.0
+    a.cargo_food = 4.0
     decision = decide_action(a, _world(), colony, 'day')
     assert decision.action == 'deposit'
 

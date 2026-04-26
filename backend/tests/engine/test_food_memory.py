@@ -83,7 +83,7 @@ def test_memory_capped_at_food_memory_max():
         # forage actually yields. Without this, cargo fills and later
         # iterations roll a 0-yield forage that skips the memory append
         # — masking the cap behaviour we're trying to test.
-        a.cargo = 0.0
+        a.cargo_food = 0.0
         actions.forage(a, w, rng=_FixedRng(13))
     assert len(a.food_memory) == config.FOOD_MEMORY_MAX
     expected = [(i, 0) for i in range(distinct - config.FOOD_MEMORY_MAX, distinct)]

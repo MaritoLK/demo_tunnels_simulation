@@ -1,4 +1,5 @@
 """Need-tuning constants and the per-tick decay function. Pure Python."""
+from . import config
 HUNGER_DECAY = 0.5
 ENERGY_DECAY = 0.3
 # Lowered from 0.1 → 0.02 so non-loners stay stable across a long demo
@@ -70,6 +71,41 @@ FORAGE_TILE_DEPLETION = 2.0
 # into colony.food_stock before they can pick up more. Creates a visible
 # gather → carry → return loop that feeds the shared stockpile.
 CARRY_MAX = 8.0
+
+# Per-unit weight contributed to cargo by each resource type. Stone is
+# heaviest, food lightest — so a stone-gathering trip ferries less mass
+# than a food trip and triggers a faster return-to-camp. cargo_weight()
+# below is the total — it's what CARRY_MAX is compared against.
+FOOD_WEIGHT = 1.0
+WOOD_WEIGHT = 2.0
+STONE_WEIGHT = 3.0
+
+
+def cargo_weight(agent):
+    """Total weight of the agent's pouch in CARRY_MAX units.
+
+    Three resource pouches → one weight number. Used by the cargo-full
+    decision rung and by gather actions to size their take so a wood
+    gather of 2 weight per unit can't push a near-full pouch over the
+    cap. Pure: no I/O, derives from agent.cargo_food / cargo_wood /
+    cargo_stone alone.
+    """
+    return (
+        agent.cargo_food * FOOD_WEIGHT
+        + agent.cargo_wood * WOOD_WEIGHT
+        + agent.cargo_stone * STONE_WEIGHT
+    )
+
+
+def carry_max_for(colony):
+    """Tier-scaled cargo cap for an agent of `colony`.
+
+    The bare CARRY_MAX constant is the tier-0 baseline (8). Tier 1
+    (Monastery) lifts to 12; tier 2 (Castle) to 16. Rogue agents
+    (no colony) fall through to the baseline — they never benefit
+    from infrastructure they're not part of.
+    """
+    return config.tier_benefit(colony, 'cargo_cap')
 
 HEALTH_CRITICAL = 20.0
 HUNGER_CRITICAL = 20.0

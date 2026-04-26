@@ -100,11 +100,11 @@ const FOOTPRINT_DURATION_MS = 2000;
  * so a state-based motion check would lope motionless foragers.
  */
 export function pickVariant(
-  agent: { state: string; cargo?: number; x: number; y: number },
+  agent: { state: string; cargo_food?: number; cargo_wood?: number; cargo_stone?: number; x: number; y: number },
   prev: { x: number; y: number } | undefined,
 ): PawnVariant {
   const moving = prev !== undefined && (agent.x !== prev.x || agent.y !== prev.y);
-  const carrying = (agent.cargo ?? 0) > 0;
+  const carrying = ((agent.cargo_food ?? 0) + (agent.cargo_wood ?? 0) + (agent.cargo_stone ?? 0)) > 0;
   if (moving && carrying) return 'runMeat';
   if (moving) return 'run';
   if (carrying) return 'idleMeat';
@@ -304,7 +304,7 @@ export class Canvas2DRenderer implements Renderer {
         const py = y * tilePx;
 
         if (sprites) {
-          drawTerrainSprite(ctx, sprites, tile.terrain, px, py, tilePx);
+          drawTerrainSprite(ctx, sprites, tile.terrain, tile.resource_type, tile.resource_amount, px, py, tilePx);
           if (tile.resource_type === 'food' && tile.resource_amount > 0) {
             // Meat sprite for food, drawn at 50% tile centred so the
             // resource reads as "an item on the tile" rather than
@@ -673,7 +673,13 @@ export class Canvas2DRenderer implements Renderer {
       // (minimum visible even at 1 unit, max at CARRY_MAX) so the
       // pouch visibly "swells" between forage and deposit. Skipped
       // for dead agents — corpses don't haul.
-      const cargo = a.alive ? a.cargo ?? 0 : 0;
+      // Compose the pouch fullness from all three resource pouches —
+      // weight (food*1 + wood*2 + stone*3) so a heavy stone trip
+      // visually swells the satchel just like a full food haul.
+      const food = a.alive ? a.cargo_food ?? 0 : 0;
+      const wood = a.alive ? a.cargo_wood ?? 0 : 0;
+      const stone = a.alive ? a.cargo_stone ?? 0 : 0;
+      const cargo = food * 1 + wood * 2 + stone * 3;
       if (cargo > 0) {
         const fill = Math.min(1, cargo / CARRY_MAX);
         const pipR = Math.max(2, r * (0.18 + 0.22 * fill));
@@ -910,6 +916,8 @@ function drawTerrainSprite(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteAtlas,
   terrain: Terrain,
+  resourceType: string | null,
+  resourceAmount: number,
   px: number,
   py: number,
   tilePx: number,
@@ -944,15 +952,19 @@ function drawTerrainSprite(
   );
   const decoration = TERRAIN_DECORATION[terrain];
   if (decoration === 'bush') {
-    // Tight crop on the bush body inside the 128×128 frame. The
-    // visible bush occupies roughly the central 96×96 region with
-    // transparent padding around it — drawing the full frame at 1×1
-    // tile wastes ~25% of the tile on padding, leaving the bush
-    // smaller than the wood-resource dot and visually invisible at
-    // fit-zoom. A tight 16,16,96,96 crop makes the bush fill the tile.
+    // Forest tiles read as a Tree1 sprite while wood remains, and
+    // as a Stump2 sprite once chopped. The user wanted depletion
+    // visible on the map — see the lumberjack stripe its way
+    // through a forest by watching trees become stumps. Source
+    // frames are 192×192 with the tree body roughly centred; a
+    // ~10% inset crop pulls in the body so it fills the tile
+    // without the surrounding transparent padding.
+    const sprite = (resourceType === 'wood' && resourceAmount > 0)
+      ? sprites.tree
+      : sprites.stump;
     ctx.drawImage(
-      sprites.bush,
-      16, 16, 96, 96,
+      sprite,
+      19, 19, 154, 154,
       px, py, tilePx, tilePx,
     );
   } else if (decoration === 'rock') {

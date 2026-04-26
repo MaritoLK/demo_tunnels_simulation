@@ -38,7 +38,7 @@ def _colony(cx=0, cy=0, food_stock=20):
 
 def test_agent_has_cargo_slot_defaulting_zero():
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    assert a.cargo == 0
+    assert a.cargo_food == 0
 
 
 def test_needs_module_exposes_carry_max():
@@ -54,7 +54,7 @@ def test_forage_puts_tile_units_into_cargo():
     w = _grass_world()
     tile = _food_tile(w, 0, 0, amount=10.0)
     actions.forage(a, w, rng=random.Random(0))
-    assert a.cargo == needs.FORAGE_TILE_DEPLETION
+    assert a.cargo_food == needs.FORAGE_TILE_DEPLETION
     # Tile still shows the shared depletion (engine-side authority).
     assert tile.resource_amount == 10.0 - needs.FORAGE_TILE_DEPLETION
 
@@ -62,11 +62,11 @@ def test_forage_puts_tile_units_into_cargo():
 def test_forage_cargo_capped_at_carry_max():
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     a.hunger = 50.0
-    a.cargo = needs.CARRY_MAX - 1  # almost full pouch
+    a.cargo_food = needs.CARRY_MAX - 1  # almost full pouch
     w = _grass_world()
     tile = _food_tile(w, 0, 0, amount=10.0)
     actions.forage(a, w, rng=random.Random(0))
-    assert a.cargo == needs.CARRY_MAX
+    assert a.cargo_food == needs.CARRY_MAX
     # Only the 1 unit of pouch room was actually taken from the tile,
     # even though FORAGE_TILE_DEPLETION would normally take more.
     assert tile.resource_amount == 9.0
@@ -80,14 +80,14 @@ def test_forage_full_hunger_but_empty_cargo_still_forages():
     tile = _food_tile(w, 0, 0, amount=10.0)
     event = actions.forage(a, w, rng=random.Random(0))
     assert event['type'] == 'foraged'
-    assert a.cargo == needs.FORAGE_TILE_DEPLETION
+    assert a.cargo_food == needs.FORAGE_TILE_DEPLETION
     assert tile.resource_amount < 10.0
 
 
 def test_forage_full_hunger_and_full_cargo_idles():
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     a.hunger = needs.NEED_MAX
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     w = _grass_world()
     tile = _food_tile(w, 0, 0, amount=10.0)
     event = actions.forage(a, w, rng=random.Random(0))
@@ -101,17 +101,17 @@ def test_forage_full_hunger_and_full_cargo_idles():
 def test_deposit_moves_cargo_into_colony_stock():
     c = _colony(food_stock=20)
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    a.cargo = 5
+    a.cargo_food = 5
     event = actions.deposit_cargo(a, c)
     assert event['type'] == 'deposited'
-    assert a.cargo == 0
+    assert a.cargo_food == 0
     assert c.food_stock == 25
 
 
 def test_deposit_sets_agent_state_depositing():
     c = _colony(food_stock=20)
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    a.cargo = 5
+    a.cargo_food = 5
     actions.deposit_cargo(a, c)
     assert a.state == actions.STATE_DEPOSITING
 
@@ -119,17 +119,17 @@ def test_deposit_sets_agent_state_depositing():
 def test_deposit_off_camp_returns_idled_no_mutation():
     c = _colony(cx=0, cy=0, food_stock=20)
     a = Agent('A', 3, 3, agent_id=1, colony_id=1)  # not at camp
-    a.cargo = 5
+    a.cargo_food = 5
     event = actions.deposit_cargo(a, c)
     assert event['type'] == 'idled'
-    assert a.cargo == 5
+    assert a.cargo_food == 5
     assert c.food_stock == 20
 
 
 def test_deposit_empty_cargo_returns_idled():
     c = _colony(food_stock=20)
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    a.cargo = 0
+    a.cargo_food = 0
     event = actions.deposit_cargo(a, c)
     assert event['type'] == 'idled'
     assert c.food_stock == 20
@@ -141,7 +141,7 @@ def test_day_at_camp_with_cargo_returns_deposit():
     c = _colony(cx=0, cy=0)
     w = _grass_world()
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    a.cargo = 3
+    a.cargo_food = 3
     # Needs all comfortable so the carry rule is the one that fires.
     a.hunger = 90
     a.energy = 90
@@ -162,7 +162,7 @@ def test_day_full_cargo_non_rogue_returns_home_to_deposit():
     c = _colony(cx=0, cy=0)
     w = _grass_world(6, 6)
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)  # off camp
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     a.hunger = 90
     a.energy = 90
     a.social = 90
@@ -178,7 +178,7 @@ def test_day_full_cargo_rogue_does_not_force_return():
     w = _grass_world(6, 6)
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)
     a.rogue = True
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     a.hunger = 90
     a.energy = 90
     a.social = 90
@@ -194,7 +194,7 @@ def test_day_partial_cargo_off_camp_does_not_force_return():
     c = _colony(cx=0, cy=0)
     w = _grass_world(6, 6)
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)
-    a.cargo = needs.CARRY_MAX // 2
+    a.cargo_food = needs.CARRY_MAX // 2
     a.hunger = 90
     a.energy = 90
     a.social = 90

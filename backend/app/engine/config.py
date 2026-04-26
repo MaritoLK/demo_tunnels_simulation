@@ -78,3 +78,37 @@ UPGRADE_TIER_COSTS = (
     {'wood': 40, 'stone': 25},
 )
 MAX_COLONY_TIER = len(UPGRADE_TIER_COSTS) - 1
+
+# Per-tier civilisation bonuses. Each row is the benefit the colony
+# unlocks at that tier. Indexed by colony.tier — tier 0 is the
+# baseline; tier 2 (Castle) is the late-game endpoint. Sized to
+# match the upgrade cost curve: tier 1 (15 wood + 8 stone) gives a
+# meaningful step, tier 2 (40 + 25) gives a bigger one.
+#
+#   * cargo_cap   — total weight an agent can pouch (CARRY_MAX baseline).
+#   * pop_cap     — replaces MAX_AGENTS_PER_COLONY at runtime.
+#   * move_cost_reduction — subtracted from the per-step terrain
+#                           cooldown (clamped at 0). Tier 2 makes
+#                           every terrain walk like grass.
+#   * rest_energy — REST_ENERGY_RESTORE override for the at-camp
+#                   rest action (rest_outdoors stays at half).
+#   * eat_cost    — food units a dawn meal at camp consumes.
+TIER_BENEFITS = (
+    {'cargo_cap':  8, 'pop_cap':  8, 'move_cost_reduction': 0, 'rest_energy':  5, 'eat_cost': 6},
+    {'cargo_cap': 12, 'pop_cap': 12, 'move_cost_reduction': 1, 'rest_energy':  8, 'eat_cost': 5},
+    {'cargo_cap': 16, 'pop_cap': 16, 'move_cost_reduction': 2, 'rest_energy': 12, 'eat_cost': 4},
+)
+
+
+def tier_benefit(colony, key):
+    """Resolve a tier-scaled benefit for `colony`.
+
+    Falls back to tier 0 if `colony` is None or has a tier outside
+    the table — keeps unit tests that synthesize bare agents (no
+    colony) on the tier-0 baseline. Lookup is one index, no
+    dict.get gymnastics on the hot path.
+    """
+    if colony is None:
+        return TIER_BENEFITS[0][key]
+    tier = max(0, min(MAX_COLONY_TIER, getattr(colony, 'tier', 0) or 0))
+    return TIER_BENEFITS[tier][key]

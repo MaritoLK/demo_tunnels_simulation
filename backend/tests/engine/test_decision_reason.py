@@ -89,7 +89,7 @@ def test_night_phase_picks_rest_outdoors_with_night_reason():
 
 def test_at_camp_with_cargo_picks_deposit_with_cargo_reason():
     a = _healthy_agent(x=0, y=0)
-    a.cargo = 3.0
+    a.cargo_food = 3.0
     d = decide_action(a, _grass_world(), _at_camp_colony(), 'day')
     assert d.action == 'deposit'
     assert 'cargo' in d.reason
@@ -122,7 +122,7 @@ def test_off_camp_low_social_picks_step_to_camp():
 
 def test_off_camp_cargo_full_picks_step_to_camp():
     a = _healthy_agent()
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     d = decide_action(a, _grass_world(), _off_camp_colony(), 'day')
     assert d.action == 'step_to_camp'
     assert 'cargo' in d.reason
@@ -155,7 +155,7 @@ def test_empty_tile_with_field_room_picks_plant():
 def test_rogue_hungry_with_cargo_picks_eat_cargo():
     a = _healthy_agent()
     a.rogue = True
-    a.cargo = 2.0
+    a.cargo_food = 2.0
     a.hunger = needs.HUNGER_MODERATE - 1
     d = decide_action(a, _grass_world(), _off_camp_colony(), 'day')
     assert d.action == 'eat_cargo'

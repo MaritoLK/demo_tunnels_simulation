@@ -297,7 +297,7 @@ def step_simulation(ticks=1):
                 for e in events
                 if e['type'] in (
                     'harvested', 'ate_from_cache', 'deposited',
-                    'gathered_wood', 'gathered_stone', 'upgraded_camp',
+                    'upgraded_camp',
                 )
             }
             if dirty_colony_ids:

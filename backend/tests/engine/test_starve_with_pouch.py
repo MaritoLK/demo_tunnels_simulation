@@ -37,7 +37,7 @@ def test_non_rogue_hunger_crit_with_pouch_eats_cargo():
     colony = _colony()
     a = Agent(name='A', x=5, y=5, agent_id=1, colony_id=1)
     a.hunger = 5.0  # below HUNGER_CRITICAL (20)
-    a.cargo = 3.0
+    a.cargo_food = 3.0
     decision = decide_action(a, world, colony, 'day')
     assert decision.action == 'eat_cargo', (
         f'expected eat_cargo when hunger crit + cargo > 0, got '
@@ -55,7 +55,7 @@ def test_health_crit_with_pouch_eats_cargo_for_recovery():
     a.health = 10.0  # below HEALTH_CRITICAL
     a.energy = 80.0
     a.hunger = 30.0  # above critical so the hunger rung doesn't fire first
-    a.cargo = 2.0
+    a.cargo_food = 2.0
     decision = decide_action(a, world, colony, 'day')
     assert decision.action == 'eat_cargo', (
         f'expected eat_cargo when health crit + cargo > 0, got '
@@ -71,7 +71,7 @@ def test_health_crit_no_cargo_still_forages():
     a.health = 10.0
     a.energy = 80.0
     a.hunger = 30.0
-    a.cargo = 0.0
+    a.cargo_food = 0.0
     decision = decide_action(a, world, colony, 'day')
     assert decision.action == 'forage', (
         f'cargo-empty health-crit must forage, got {decision.action!r}'
@@ -83,7 +83,7 @@ def test_hunger_crit_no_cargo_still_forages():
     colony = _colony()
     a = Agent(name='A', x=5, y=5, agent_id=1, colony_id=1)
     a.hunger = 5.0
-    a.cargo = 0.0
+    a.cargo_food = 0.0
     decision = decide_action(a, world, colony, 'day')
     assert decision.action == 'forage', (
         f'cargo-empty hunger-crit must forage, got {decision.action!r}'
@@ -99,7 +99,7 @@ def test_health_crit_energy_crit_still_rests():
     a = Agent(name='A', x=5, y=5, agent_id=1, colony_id=1)
     a.health = 10.0
     a.energy = 10.0
-    a.cargo = 5.0
+    a.cargo_food = 5.0
     decision = decide_action(a, world, colony, 'day')
     assert decision.action == 'rest', (
         f'expected rest when health+energy both critical, got '

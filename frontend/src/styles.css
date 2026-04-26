@@ -1027,6 +1027,15 @@ body::after {
 }
 .colony-row__name { font-weight: 600; min-width: 54px; }
 .colony-row__stat { opacity: 0.78; }
+/* Upgrade requirements indicator — slightly muted by default; turns
+   bright when the gate is met so the eye lands on a ready upgrade. */
+.colony-row__upgrade {
+  margin-left: auto;
+  opacity: 0.85;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.colony-row__met { color: #6dd24a; font-weight: 600; }
 
 /* --- Agent tooltip ------------------------------------------------------ */
 

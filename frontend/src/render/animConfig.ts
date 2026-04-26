@@ -39,6 +39,8 @@ export const STATE_VISUALS: Record<string, StateVisual> = {
   idle:        { glyph: '',   label: 'idle',    color: '#8a8a93' }, // muted grey
   resting:     { glyph: '💤', label: 'rest',    color: '#6b9bd4' }, // sky blue — calm
   foraging:    { glyph: '🌾', label: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
+  chopping:    { glyph: '🪓', label: 'chop',    color: '#a87b4a' }, // wood-brown — matches log
+  mining:      { glyph: '⛏', label: 'mine',    color: '#9aa3ad' }, // slate — matches stone
   socialising: { glyph: '💬', label: 'social',  color: '#d870c9' }, // magenta — warmth
   exploring:   { glyph: '?',  label: 'explore', color: '#5cbd4a' }, // green — go
   traversing:  { glyph: '…',  label: 'trek',    color: '#c08a4a' }, // tan — terrain drag

@@ -121,7 +121,7 @@ def test_cargo_full_does_not_pick_step_to_harvest():
     # bringing pouch home.
     from app.engine import needs
     a = _agent(10, 10)
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     w = _grass()
     w.get_tile(5, 5).crop_state = 'mature'
     decision = decide_action(a, w, _colony(), 'day')

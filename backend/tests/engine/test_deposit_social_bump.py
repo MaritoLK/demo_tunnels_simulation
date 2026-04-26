@@ -20,7 +20,7 @@ def _colony(camp_x=0, camp_y=0):
 
 def _camped_agent(cargo=4.0):
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
-    a.cargo = cargo
+    a.cargo_food = cargo
     a.social = 50.0
     return a
 

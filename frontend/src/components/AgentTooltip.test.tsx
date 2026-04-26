@@ -7,7 +7,8 @@ import type { Agent, Colony } from '../api/types';
 const baseAgent: Agent = {
   id: 1, name: 'Alice', x: 2, y: 2, state: 'foraging',
   hunger: 47, energy: 80, social: 65, health: 90, age: 12,
-  alive: true, colony_id: 1, rogue: false, loner: false, cargo: 2.5,
+  alive: true, colony_id: 1, rogue: false, loner: false,
+  cargo_food: 2.5, cargo_wood: 0, cargo_stone: 0,
   decision_reason: 'hunger < 50 → forage',
 };
 
@@ -34,7 +35,7 @@ describe('AgentTooltip', () => {
   });
 
   it('omits cargo line when cargo is 0', () => {
-    const noCargo = { ...baseAgent, cargo: 0 };
+    const noCargo = { ...baseAgent, cargo_food: 0, cargo_wood: 0, cargo_stone: 0 };
     render(<AgentTooltip agent={noCargo} colony={baseColony} screenX={100} screenY={100} />);
     expect(screen.queryByText(/cargo/i)).not.toBeInTheDocument();
   });

@@ -267,7 +267,7 @@ describe('Canvas2DRenderer — lifecycle fade applies to overlays', () => {
           state: 'foraging',
           alive: true,
           colony_id: 1,
-          cargo: 4,
+          cargo_food: 4, cargo_wood: 0, cargo_stone: 0,
           decision_reason: '',
         },
       ],
@@ -370,14 +370,14 @@ describe('Canvas2DRenderer — interpolation across snapshots', () => {
 
 
 describe('pickVariant', () => {
-  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo: 0 };
+  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo_food: 0, cargo_wood: 0, cargo_stone: 0 };
 
   it('returns idle when stationary with no cargo', () => {
     expect(pickVariant(baseAgent, { x: 1, y: 1 })).toBe('idle');
   });
 
   it('returns idleMeat when stationary with cargo', () => {
-    expect(pickVariant({ ...baseAgent, cargo: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
+    expect(pickVariant({ ...baseAgent, cargo_food: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
   });
 
   it('returns run when moving, no cargo', () => {
@@ -385,7 +385,7 @@ describe('pickVariant', () => {
   });
 
   it('returns runMeat when moving with cargo', () => {
-    expect(pickVariant({ ...baseAgent, cargo: 3 }, { x: 0, y: 1 })).toBe('runMeat');
+    expect(pickVariant({ ...baseAgent, cargo_wood: 3 }, { x: 0, y: 1 })).toBe('runMeat');
   });
 
   it('returns idle when prev is undefined (first frame)', () => {

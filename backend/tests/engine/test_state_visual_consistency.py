@@ -106,7 +106,7 @@ def test_forage_idle_guard_clears_prior_state():
     a = Agent(name='A', x=5, y=5, agent_id=1, colony_id=1)
     a.state = actions.STATE_RESTING
     a.hunger = needs.NEED_MAX
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     w = _grass()
     colony = _colony()
     execute_action('forage', a, w, [a], colony, rng=random.Random(0))
@@ -126,7 +126,7 @@ def test_socialise_idle_guard_clears_prior_state():
 def test_deposit_idle_guard_clears_prior_state():
     a = Agent(name='A', x=5, y=5, agent_id=1, colony_id=1)
     a.state = actions.STATE_RESTING
-    a.cargo = 0  # nothing to deposit → idle path
+    a.cargo_food = 0  # nothing to deposit → idle path
     w = _grass()
     colony = _colony()
     execute_action('deposit', a, w, [a], colony, rng=random.Random(0))

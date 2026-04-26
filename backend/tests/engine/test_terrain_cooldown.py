@@ -13,10 +13,21 @@ from app.engine.world import Tile, World
 
 
 def _world_with_terrain(center_terrain='grass'):
-    """5x5 grass world with (2,2) replaced by center_terrain. Agent starts at (1,2)."""
+    """5x5 grass world with (2,2) replaced by center_terrain. Agent starts at (1,2).
+
+    Forest / stone tiles are seeded with their matching resource so
+    `move_cost` reads them as full (cost 2 / 3) instead of depleted
+    (cost 1) — depleted tiles walk like grass.
+    """
     w = World(5, 5)
     w.tiles = [[Tile(x, y, 'grass') for x in range(5)] for y in range(5)]
     w.tiles[2][2].terrain = center_terrain
+    if center_terrain == 'forest':
+        w.tiles[2][2].resource_type = 'wood'
+        w.tiles[2][2].resource_amount = 5.0
+    elif center_terrain == 'stone':
+        w.tiles[2][2].resource_type = 'stone'
+        w.tiles[2][2].resource_amount = 5.0
     return w
 
 
@@ -67,6 +78,10 @@ def test_explore_sets_cooldown_for_destination_terrain():
     w = _world_with_terrain('grass')
     w.tiles[2][3].terrain = 'sand'
     w.tiles[2][1].terrain = 'stone'
+    # Stone tile carries its resource so move_cost reads it as full
+    # (cost 3) rather than the depleted-walk-like-grass branch.
+    w.tiles[2][1].resource_type = 'stone'
+    w.tiles[2][1].resource_amount = 5.0
     w.tiles[1][2].terrain = 'grass'
     w.tiles[3][2].terrain = 'grass'
     rng = random.Random(0)
@@ -74,10 +89,10 @@ def test_explore_sets_cooldown_for_destination_terrain():
         a.x, a.y = 2, 2
         a.move_cooldown = 0
         actions.explore(a, w, rng=rng)
-        dest_terrain = w.get_tile(a.x, a.y).terrain
-        expected = actions.TERRAIN_MOVE_COST[dest_terrain] - 1
+        dest_tile = w.get_tile(a.x, a.y)
+        expected = actions.move_cost(dest_tile) - 1
         assert a.move_cooldown == expected, (
-            f"landed on {dest_terrain} at ({a.x},{a.y}), cooldown {a.move_cooldown} != {expected}"
+            f"landed on {dest_tile.terrain} at ({a.x},{a.y}), cooldown {a.move_cooldown} != {expected}"
         )
 
 

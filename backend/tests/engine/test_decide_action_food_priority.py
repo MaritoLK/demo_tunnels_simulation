@@ -82,7 +82,7 @@ def test_decide_action_skips_food_when_pouch_full():
     w = _grass_world()
     _set_food(w, 3, 2)
     a = _fresh_agent()
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     decision = decide_action(a, w, _colony(), 'day')
     assert decision.action == 'step_to_camp'
 
