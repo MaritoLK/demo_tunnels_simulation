@@ -17,6 +17,15 @@ class Agent(db.Model):
     health = db.Column(db.Float, nullable=False, default=100.0, server_default='100.0')
     age = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     alive = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    # `rogue` is a one-way flag set in needs.decay_needs once social hits 0
+    # ("you left the tribe too long, no coming back"). Persisted so the flag
+    # survives a worker restart — without this column a rogue agent reverts
+    # to seeking camp on reload, breaking the engine invariant.
+    rogue = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    # `loner` is a spawn-time promotion that scales social decay so rogue
+    # transitions land inside a demo window. Persisted for the same reason
+    # as `rogue`: a reload otherwise re-rolls the demo's calibration.
+    loner = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     cargo = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
     colony_id = db.Column(
         db.Integer,

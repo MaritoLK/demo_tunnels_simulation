@@ -17,6 +17,8 @@ def agent_to_row(agent):
         health=agent.health,
         age=agent.age,
         alive=agent.alive,
+        rogue=agent.rogue,
+        loner=agent.loner,
         colony_id=agent.colony_id,
         cargo=agent.cargo,
     )
@@ -31,6 +33,8 @@ def row_to_agent(row):
     a.health = row.health
     a.age = row.age
     a.alive = row.alive
+    a.rogue = row.rogue
+    a.loner = row.loner
     a.cargo = row.cargo
     return a
 
@@ -39,6 +43,10 @@ def update_agent_row(row, engine_agent):
     """Copy mutable per-tick fields from engine agent onto its ORM row.
     `name` and `id` are immutable post-spawn — omit them.
     `colony_id` is immutable post-spawn — omit it.
+    `loner` is immutable post-spawn (set once at sim build) — but copying
+    it is a one-way no-op rather than a guard, so keeping the assignment
+    here means a future tick path that flips it would survive a step.
+    `rogue` is one-way (False → True in decay_needs) and changes per tick.
     """
     row.x = engine_agent.x
     row.y = engine_agent.y
@@ -49,6 +57,8 @@ def update_agent_row(row, engine_agent):
     row.health = engine_agent.health
     row.age = engine_agent.age
     row.alive = engine_agent.alive
+    row.rogue = engine_agent.rogue
+    row.loner = engine_agent.loner
     row.cargo = engine_agent.cargo
 
 
