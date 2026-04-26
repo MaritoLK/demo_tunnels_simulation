@@ -36,7 +36,7 @@ import {
   type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
-import { FRAME_MS, FRAMES_PER_CYCLE, STATE_VISUALS } from './animConfig';
+import { FRAME_MS, FRAMES_PER_VARIANT, STATE_VISUALS } from './animConfig';
 import { InterpBuffer } from './interpBuffer';
 import { LifecycleFade } from './lifecycleFade';
 
@@ -237,7 +237,7 @@ export class Canvas2DRenderer implements Renderer {
       } else {
         anim.elapsedMs += dt;
         while (anim.elapsedMs >= FRAME_MS) {
-          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_CYCLE;
+          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_VARIANT[anim.variant];
           anim.elapsedMs -= FRAME_MS;
         }
       }
