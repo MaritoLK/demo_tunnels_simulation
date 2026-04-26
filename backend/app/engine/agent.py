@@ -25,6 +25,7 @@ class Agent:
         'rogue', 'loner',
         'cargo',
         'last_decision_reason',
+        'food_memory',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -67,6 +68,14 @@ class Agent:
         # before the first tick so serializer + UI can treat absence as
         # "no decision yet" without special-casing None.
         self.last_decision_reason = ''
+        # Recent productive forage tiles (most-recent-last). When the
+        # agent falls into the explore branch, it wanders toward the
+        # nearest remembered tile rather than picking a random
+        # neighbor — turns "all needs ok → drift" into "all needs ok
+        # → patrol the colony's known caches." Capped to FOOD_MEMORY_MAX
+        # so a long run doesn't grow the slot unbounded; in-memory only
+        # for now (re-fills naturally on the next successful forage).
+        self.food_memory = []
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"

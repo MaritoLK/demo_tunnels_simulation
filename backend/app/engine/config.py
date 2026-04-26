@@ -17,3 +17,10 @@ MAX_FIELDS_PER_COLONY = 4
 # 1 = the 3x3 block centred on the agent. Future: scaled by walking-skill
 # tier so veteran scouts uncover wider areas.
 REVEAL_RADIUS = 1
+
+# How many recent productive forage tiles each agent remembers. The
+# explore branch biases toward these so "all needs ok → wander" becomes
+# "all needs ok → patrol known caches." 3 is small enough that the
+# memory turns over within a few days, big enough that a single
+# depleted tile doesn't strand the agent.
+FOOD_MEMORY_MAX = 3

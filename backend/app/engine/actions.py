@@ -245,6 +245,20 @@ def forage(agent, world, *, rng):
         # what little they found.
         agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
         agent.state = STATE_FORAGING
+        if taken > 0:
+            # Memorise the productive tile so the next explore branch
+            # patrols toward it. Skip on a zero-yield (crit-fail or
+            # tile-empty / pouch-full) forage — the tile didn't earn
+            # its place in the memory.
+            mem = agent.food_memory
+            pos = (tile.x, tile.y)
+            if not mem or mem[-1] != pos:
+                # Don't re-stamp the same tile if the agent foraged
+                # the same spot twice in a row; that would crowd the
+                # capped memory with one location.
+                mem.append(pos)
+                if len(mem) > config.FOOD_MEMORY_MAX:
+                    del mem[:len(mem) - config.FOOD_MEMORY_MAX]
         return {
             'type': 'foraged',
             'description': f'{agent.name} gathered food at ({tile.x},{tile.y}) (d20={roll})',
@@ -357,6 +371,36 @@ def socialise(agent, agents, *, colony):
 
 
 def explore(agent, world, *, rng):
+    # Prune depleted memory: a remembered tile that's been forage-emptied
+    # is just a phantom anchor — agents would patrol toward it forever.
+    # Done here (the consumer) rather than per-tick so we only pay the
+    # cost when explore actually fires.
+    if agent.food_memory:
+        agent.food_memory = [
+            p for p in agent.food_memory
+            if world.in_bounds(p[0], p[1])
+            and world.get_tile(p[0], p[1]).resource_amount > 0
+        ]
+    # Memory-biased explore: patrol toward the nearest still-productive
+    # remembered forage tile. Without this, the all-needs-ok branch is
+    # a random walk and the agent looks like they have no purpose.
+    if agent.food_memory:
+        target = min(
+            agent.food_memory,
+            key=lambda p: abs(p[0] - agent.x) + abs(p[1] - agent.y),
+        )
+        if step_toward(agent, target[0], target[1], world):
+            agent.state = STATE_EXPLORING
+            return {
+                'type': 'moved',
+                'description': (
+                    f'{agent.name} patrolled toward known food '
+                    f'at ({target[0]},{target[1]})'
+                ),
+            }
+    # Random-walk fallback — original explore behaviour. Used when the
+    # agent has no memory yet (early game) or the BFS step finds no
+    # path (memory tile on an unreachable island, target == own tile).
     options = []
     for dx, dy in DIRECTIONS:
         nx, ny = agent.x + dx, agent.y + dy
