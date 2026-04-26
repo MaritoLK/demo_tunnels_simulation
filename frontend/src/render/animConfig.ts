@@ -5,8 +5,18 @@
 // demo timing.
 export const FRAME_MS = 100;
 
-// Each pawn sheet is 1536×192 = 8 frames of 192×192.
-export const FRAMES_PER_CYCLE = 8;
+// Per-variant frame counts. Tiny Swords ships idle sheets at 1536×192
+// (8 frames) but run sheets at 1152×192 (6 frames). The previous
+// constant `FRAMES_PER_CYCLE = 8` cycled the run animation through 8
+// frames anyway — frames 6 and 7 read past the source image, drawing
+// transparent and producing the "agent disappears mid-walk" flicker.
+// Verified via `file frontend/src/assets/tiny-swords/.../Pawn_*.png`.
+export const FRAMES_PER_VARIANT: Readonly<Record<'idle' | 'run' | 'idleMeat' | 'runMeat', number>> = {
+  idle: 8,
+  idleMeat: 8,
+  run: 6,
+  runMeat: 6,
+};
 
 // Per-state visual surface. One entry per engine state — single source
 // of truth for the overhead glyph, the action label, and the label tint.
@@ -29,6 +39,8 @@ export const STATE_VISUALS: Record<string, StateVisual> = {
   idle:        { glyph: '',   label: 'idle',    color: '#8a8a93' }, // muted grey
   resting:     { glyph: '💤', label: 'rest',    color: '#6b9bd4' }, // sky blue — calm
   foraging:    { glyph: '🌾', label: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
+  chopping:    { glyph: '🪓', label: 'chop',    color: '#a87b4a' }, // wood-brown — matches log
+  mining:      { glyph: '⛏', label: 'mine',    color: '#9aa3ad' }, // slate — matches stone
   socialising: { glyph: '💬', label: 'social',  color: '#d870c9' }, // magenta — warmth
   exploring:   { glyph: '?',  label: 'explore', color: '#5cbd4a' }, // green — go
   traversing:  { glyph: '…',  label: 'trek',    color: '#c08a4a' }, // tan — terrain drag

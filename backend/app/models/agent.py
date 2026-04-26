@@ -17,7 +17,29 @@ class Agent(db.Model):
     health = db.Column(db.Float, nullable=False, default=100.0, server_default='100.0')
     age = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     alive = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
-    cargo = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    # `rogue` is a one-way flag set in needs.decay_needs once social hits 0
+    # ("you left the tribe too long, no coming back"). Persisted so the flag
+    # survives a worker restart — without this column a rogue agent reverts
+    # to seeking camp on reload, breaking the engine invariant.
+    rogue = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    # `loner` is a spawn-time promotion that scales social decay so rogue
+    # transitions land inside a demo window. Persisted for the same reason
+    # as `rogue`: a reload otherwise re-rolls the demo's calibration.
+    loner = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    # Three pouches: food / wood / stone. Total weight (food + 2*wood +
+    # 3*stone) is capped by needs.CARRY_MAX. Pre-refactor a single
+    # `cargo` column held the food count and gather_wood / gather_stone
+    # bypassed the agent entirely. The pouch loop is now uniform
+    # across all three resources — gather → carry → deposit at camp.
+    cargo_food = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    cargo_wood = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    cargo_stone = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
+    # Lifetime tile steps. Drives the walk-skill tier table that
+    # scales fog reveal radius (see engine/skill.py). Persisted so a
+    # reload preserves a veteran agent's wider sight.
+    tiles_walked = db.Column(
+        db.Integer, nullable=False, default=0, server_default='0',
+    )
     colony_id = db.Column(
         db.Integer,
         db.ForeignKey('colonies.id', ondelete='SET NULL'),

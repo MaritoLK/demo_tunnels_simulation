@@ -77,24 +77,36 @@ export function AgentPanel() {
         <Meter label="hunger" value={agent.hunger} hue={needHue(agent.hunger)} />
         <Meter label="energy" value={agent.energy} hue={needHue(agent.energy)} />
         <Meter label="social" value={agent.social} hue={needHue(agent.social)} />
-        <CargoMeter cargo={agent.cargo ?? 0} />
+        <CargoMeter
+          food={agent.cargo_food ?? 0}
+          wood={agent.cargo_wood ?? 0}
+          stone={agent.cargo_stone ?? 0}
+        />
       </div>
     </section>
   );
 }
 
-// Pouch fullness. Scale is 0..CARRY_MAX (not 0..100 like needs), so
-// render fill as a percentage and show the raw `cargo/CARRY_MAX`
-// readout. Warm hue mirrors the food sprite's coral; a full pouch
-// should read as "go deposit" not "danger".
-function CargoMeter({ cargo }: { cargo: number }) {
-  const clamped = Math.max(0, Math.min(CARRY_MAX, cargo));
+// Pouch fullness. Scale is 0..CARRY_MAX (weight units, not 0..100 like
+// needs). Weight = food*1 + wood*2 + stone*3, so the meter shows the
+// total + a per-resource breakdown so the demo viewer can read at a
+// glance whether the agent is hauling food, lumber, or stone.
+function CargoMeter({ food, wood, stone }: { food: number; wood: number; stone: number }) {
+  const weight = food * 1 + wood * 2 + stone * 3;
+  const clamped = Math.max(0, Math.min(CARRY_MAX, weight));
   const pct = (clamped / CARRY_MAX) * 100;
+  const parts: string[] = [];
+  if (food > 0) parts.push(`🍎 ${food.toFixed(0)}`);
+  if (wood > 0) parts.push(`🪵 ${wood.toFixed(0)}`);
+  if (stone > 0) parts.push(`⛰ ${stone.toFixed(0)}`);
   return (
     <div className="meter">
       <div className="meter__row">
         <span className="meter__label">cargo</span>
-        <span className="meter__value">{clamped.toFixed(1)} / {CARRY_MAX}</span>
+        <span className="meter__value">
+          {clamped.toFixed(1)} / {CARRY_MAX}
+          {parts.length > 0 && <> · {parts.join(' ')}</>}
+        </span>
       </div>
       <div className="meter__track">
         <div

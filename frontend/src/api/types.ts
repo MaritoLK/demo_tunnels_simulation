@@ -7,8 +7,36 @@
 // UI code (cargo bars, phase progress, etc.) doesn't pluck literals at
 // every call site. If you change a backend value, update these too.
 
-// Maximum cargo per agent. Backend: backend/app/engine/needs.py CARRY_MAX.
+// Maximum cargo per agent at tier 0. Backend: backend/app/engine/needs.py
+// CARRY_MAX. Per-tier values live in TIER_BENEFITS below.
 export const CARRY_MAX = 8;
+
+// Wood / stone cost to REACH each colony tier. Index 0 is the freebie
+// founder tier. Mirrors backend `config.UPGRADE_TIER_COSTS` so the
+// ColonyPanel can show "wood 12/15, stone 6/8 → tier 2" without an
+// extra wire field. Keep both files in lockstep.
+export const UPGRADE_TIER_COSTS = [
+  { wood: 0,  stone: 0  },
+  { wood: 15, stone: 8  },
+  { wood: 40, stone: 25 },
+] as const;
+export const MAX_COLONY_TIER = UPGRADE_TIER_COSTS.length - 1;
+
+// Tier benefits — mirrors backend `config.TIER_BENEFITS`. ColonyPanel
+// shows the upcoming row so the demo viewer reads "what does the next
+// upgrade get me?" at a glance. Keys match the backend table verbatim.
+export interface TierBenefit {
+  cargo_cap: number;
+  pop_cap: number;
+  move_cost_reduction: number;
+  rest_energy: number;
+  eat_cost: number;
+}
+export const TIER_BENEFITS: readonly TierBenefit[] = [
+  { cargo_cap:  8, pop_cap:  8, move_cost_reduction: 0, rest_energy:  5, eat_cost: 6 },
+  { cargo_cap: 12, pop_cap: 12, move_cost_reduction: 1, rest_energy:  8, eat_cost: 5 },
+  { cargo_cap: 16, pop_cap: 16, move_cost_reduction: 2, rest_energy: 12, eat_cost: 4 },
+];
 
 // Ticks per day/night phase. Backend: backend/app/engine/cycle.py TICKS_PER_PHASE.
 export const TICKS_PER_PHASE = 30;
@@ -58,9 +86,13 @@ export interface Agent {
   // Their social need decays ~4× faster, making them the most likely
   // candidates to tip into rogue within a demo window.
   loner?: boolean;
-  // Units of food in the agent's pouch (0..CARRY_MAX). Drained by
-  // deposit at camp. Optional for legacy snapshots pre-cargo.
-  cargo?: number;
+  // Per-resource pouches. Total weight (cargo_food*1 + cargo_wood*2
+  // + cargo_stone*3) is capped at CARRY_MAX. Drained at camp deposit.
+  // Optional for legacy snapshots pre-multi-resource — the renderer
+  // and tooltip treat undefined as 0.
+  cargo_food?: number;
+  cargo_wood?: number;
+  cargo_stone?: number;
   // Engine's own one-line explanation of the last decide_action branch
   // that fired for this agent. Empty string before the first tick.
   decision_reason: string;
@@ -74,10 +106,26 @@ export interface Colony {
   camp_y: number;
   food_stock: number;
   growing_count: number;
+  // Wood / stone stockpiles — what camp-tier upgrades cost. Optional
+  // for older snapshots during a rolling deploy; renderer treats
+  // missing as 0.
+  wood_stock?: number;
+  stone_stock?: number;
+  // Camp tier (0/1/2). Drives the house sprite swap and the per-agent
+  // fog reveal radius bonus. Optional for back-compat — undefined
+  // reads as 0.
+  tier?: number;
   // Sprite-asset key — decouples agent sprite selection from colony.name
   // so a future colony rename doesn't lose its visual identity.
   // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).
   sprite_palette: string;
+  // Tiles this colony has revealed. Cumulative — never reset during a
+  // run. Sorted on the wire so identical fog produces identical bytes —
+  // keeps the nginx micro-cache and SSE diff happy. Optional because
+  // older clients may receive a payload without it during a rolling
+  // deploy; the renderer falls back to "all explored" when missing
+  // rather than blacking out the world.
+  explored?: Array<[number, number]>;
 }
 
 export interface SimulationSummary {

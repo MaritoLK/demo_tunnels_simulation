@@ -54,6 +54,12 @@ export interface FrameSnapshot {
   // to a render time (server_time_ms - INTERP_DELAY_MS). Optional
   // so legacy fixtures and tests that omit it still type-check.
   serverNowMs?: number;
+  // Per-agent latest d20 forage roll + the wall-clock instant the
+  // event arrived. The renderer flashes a "1d20 = N" chip above the
+  // agent for a short window after each roll. Optional so tests and
+  // older payloads without dice events still type-check; map values
+  // older than the chip duration are simply ignored at render time.
+  recentForageRolls?: Map<number, { roll: number; receivedAtMs: number }>;
 }
 
 export interface Renderer {

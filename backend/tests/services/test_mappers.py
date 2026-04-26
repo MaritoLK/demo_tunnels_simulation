@@ -23,12 +23,16 @@ def _engine_agent_fully_populated():
     a.health = 9.5
     a.age = 12
     a.alive = False
+    a.rogue = True
+    a.loner = True
+    a.tiles_walked = 47
     return a
 
 
 def _snapshot_agent(a):
     return (a.id, a.name, a.x, a.y, a.state, a.hunger, a.energy,
-            a.social, a.health, a.age, a.alive)
+            a.social, a.health, a.age, a.alive, a.rogue, a.loner,
+            a.tiles_walked)
 
 
 def test_agent_roundtrip_preserves_all_fields():

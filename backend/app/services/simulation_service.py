@@ -278,13 +278,36 @@ def step_simulation(ticks=1):
         try:
             events = sim.run(ticks)
 
+            # Newborns from sim._maybe_reproduce arrive with id=None.
+            # Persist them BEFORE building event rows / updating existing
+            # agents — the auto-generated row.id flows back onto the engine
+            # agent so subsequent ticks (and the wire payload) carry a
+            # real id. Pre-fix the newborn was a phantom: it ran in
+            # memory but the wire serializer sent id=null, the renderer
+            # keyed everything (interp, lifecycle fade, footprints) by
+            # id and `Map.get(null)` returned undefined, so the agent
+            # rendered with alpha 0 — invisible, no body.
+            new_engine_agents = [a for a in sim.agents if a.id is None]
+            if new_engine_agents:
+                new_rows = []
+                for engine_a in new_engine_agents:
+                    row = mappers.agent_to_row(engine_a)
+                    db.session.add(row)
+                    new_rows.append(row)
+                db.session.flush()
+                for engine_a, row in zip(new_engine_agents, new_rows):
+                    engine_a.id = row.id
+
             event_rows = [mappers.event_to_row(e) for e in events]
             db.session.add_all(event_rows)
 
             dirty_tile_coords = {
                 (e['data']['tile_x'], e['data']['tile_y'])
                 for e in events
-                if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
+                if e['type'] in (
+                    'foraged', 'planted', 'harvested', 'crop_matured',
+                    'gathered_wood', 'gathered_stone',
+                )
             }
             if dirty_tile_coords:
                 _update_dirty_tiles(sim, dirty_tile_coords)
@@ -292,7 +315,10 @@ def step_simulation(ticks=1):
             dirty_colony_ids = {
                 e['data']['colony_id']
                 for e in events
-                if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
+                if e['type'] in (
+                    'harvested', 'ate_from_cache', 'deposited',
+                    'upgraded_camp',
+                )
             }
             if dirty_colony_ids:
                 _update_dirty_colonies(sim, dirty_colony_ids)

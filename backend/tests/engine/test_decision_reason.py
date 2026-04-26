@@ -89,7 +89,7 @@ def test_night_phase_picks_rest_outdoors_with_night_reason():
 
 def test_at_camp_with_cargo_picks_deposit_with_cargo_reason():
     a = _healthy_agent(x=0, y=0)
-    a.cargo = 3.0
+    a.cargo_food = 3.0
     d = decide_action(a, _grass_world(), _at_camp_colony(), 'day')
     assert d.action == 'deposit'
     assert 'cargo' in d.reason
@@ -122,7 +122,7 @@ def test_off_camp_low_social_picks_step_to_camp():
 
 def test_off_camp_cargo_full_picks_step_to_camp():
     a = _healthy_agent()
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     d = decide_action(a, _grass_world(), _off_camp_colony(), 'day')
     assert d.action == 'step_to_camp'
     assert 'cargo' in d.reason
@@ -138,9 +138,14 @@ def test_mature_tile_picks_harvest():
 
 
 def test_empty_tile_with_field_room_picks_plant():
-    a = _healthy_agent()
-    # off-camp colony uses growing_count=MAX. Override for this test:
-    c = EngineColony(id=1, name='Test', color='#000', camp_x=99, camp_y=99,
+    a = _healthy_agent()  # at (2,2)
+    # Camp at (5,5) so the agent at (2,2) is off-camp BUT within the
+    # PLANT_RADIUS_FROM_CAMP=4 field bubble (Chebyshev distance 3).
+    # Pre-radius-rule the test used camp_x=99 to force off-camp; that
+    # also put the agent miles outside the plantable area, so plant
+    # would now be refused and the test would (incorrectly) read as
+    # broken behaviour rather than a tightened gate.
+    c = EngineColony(id=1, name='Test', color='#000', camp_x=5, camp_y=5,
                      food_stock=18, growing_count=0)
     d = decide_action(a, _grass_world(), c, 'day')
     assert d.action == 'plant'
@@ -150,7 +155,7 @@ def test_empty_tile_with_field_room_picks_plant():
 def test_rogue_hungry_with_cargo_picks_eat_cargo():
     a = _healthy_agent()
     a.rogue = True
-    a.cargo = 2.0
+    a.cargo_food = 2.0
     a.hunger = needs.HUNGER_MODERATE - 1
     d = decide_action(a, _grass_world(), _off_camp_colony(), 'day')
     assert d.action == 'eat_cargo'

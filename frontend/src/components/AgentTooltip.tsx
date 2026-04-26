@@ -48,7 +48,10 @@ export function AgentTooltip({ agent, colony, screenX, screenY }: Props) {
     viewportW, viewportH,
   );
   const glyph = STATE_VISUALS[agent.state]?.glyph ?? '';
-  const cargo = agent.cargo ?? 0;
+  const food = agent.cargo_food ?? 0;
+  const wood = agent.cargo_wood ?? 0;
+  const stone = agent.cargo_stone ?? 0;
+  const weight = food * 1 + wood * 2 + stone * 3;
 
   return (
     <div className="agent-tooltip" style={{ left, top }}>
@@ -70,9 +73,12 @@ export function AgentTooltip({ agent, colony, screenX, screenY }: Props) {
         <MiniBar label="social" value={agent.social} />
         <MiniBar label="health" value={agent.health} />
       </div>
-      {cargo > 0 && (
+      {weight > 0 && (
         <div className="agent-tooltip__cargo">
-          cargo {cargo.toFixed(1)} / {CARRY_MAX}
+          cargo {weight.toFixed(1)} / {CARRY_MAX}
+          {food > 0 && <> · 🍎 {food.toFixed(0)}</>}
+          {wood > 0 && <> · 🪵 {wood.toFixed(0)}</>}
+          {stone > 0 && <> · ⛰ {stone.toFixed(0)}</>}
         </div>
       )}
       {agent.decision_reason && (

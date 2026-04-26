@@ -81,7 +81,7 @@ def test_forage_full_hunger_and_full_cargo_does_not_deplete_tile():
     tile alone."""
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     a.hunger = needs.NEED_MAX
-    a.cargo = needs.CARRY_MAX
+    a.cargo_food = needs.CARRY_MAX
     w = _grass_world()
     food_tile = w.get_tile(0, 0)
     food_tile.resource_type = 'food'

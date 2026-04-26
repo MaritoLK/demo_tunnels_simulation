@@ -34,7 +34,9 @@ def agent_to_dict(agent):
         'colony_id': agent.colony_id,
         'rogue': agent.rogue,
         'loner': agent.loner,
-        'cargo': agent.cargo,
+        'cargo_food': agent.cargo_food,
+        'cargo_wood': agent.cargo_wood,
+        'cargo_stone': agent.cargo_stone,
         'decision_reason': agent.last_decision_reason,
     }
 
@@ -53,15 +55,24 @@ def tile_to_dict(tile):
 
 
 def colony_to_dict(colony):
+    # `explored` is a Python set of (x, y) tuples — sort it for a stable
+    # wire shape so two snapshots with the same fog produce identical
+    # bytes (cache-key friendly behind the nginx micro-cache and trivial
+    # to diff during demos). The list-of-pairs form keeps the renderer
+    # close to the engine's coord type without a JSON-key gymnastics pass.
     return {
         'id': colony.id,
         'name': colony.name,
+        'wood_stock': colony.wood_stock,
+        'stone_stock': colony.stone_stock,
+        'tier': colony.tier,
         'color': colony.color,
         'camp_x': colony.camp_x,
         'camp_y': colony.camp_y,
         'food_stock': colony.food_stock,
         'growing_count': colony.growing_count,
         'sprite_palette': colony.sprite_palette,
+        'explored': sorted(colony.explored),
     }
 
 

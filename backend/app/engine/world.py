@@ -33,12 +33,21 @@ TERRAIN_WEIGHTS = {
 BIOME_SEEDS_PER_TILE = 0.04
 MIN_BIOME_SEEDS = 6  # floor for tiny worlds so even 4×4 gets variety
 
-FOOD_ON_GRASS_CHANCE = 0.12
+# Tightened from 0.12 → 0.06 in the fog-of-war pass: fewer food tiles
+# per grass field so a colony can't survive on tiles within sight of
+# their camp. Drives agents to clear fog and discover food beyond their
+# immediate vicinity. Pair with the lowered per-tile range below — both
+# knobs together cut total starting food roughly to a third.
+FOOD_ON_GRASS_CHANCE = 0.06
 INITIAL_RESOURCE_AMOUNT = {
     'food': 10.0,
     'wood': 15.0,
     'stone': 10.0,
 }
+# Per-food-tile yield range. Was (2, 10) avg 6; lowered to (1, 5) avg 3
+# so a single tile feeds fewer forages and the colony has to keep moving.
+FOOD_TILE_YIELD_MIN = 1
+FOOD_TILE_YIELD_MAX = 5
 
 
 class Tile:
@@ -122,11 +131,12 @@ class World:
     @staticmethod
     def _roll_resource(terrain, rng):
         if terrain == 'grass' and rng.random() < FOOD_ON_GRASS_CHANCE:
-            # Food is variable per tile (2–10 units) so the 'x N' badge
-            # shows actual depletion rather than a flat starting value.
-            # Wood/stone stay fixed — no visible serving badge on those
-            # and the gathering loop already feels right at a cap.
-            return 'food', float(rng.randint(2, 10))
+            # Food is variable per tile so the 'x N' badge shows actual
+            # depletion rather than a flat starting value. Range was
+            # widened (2-10) before the scarcity pass; tightened to
+            # FOOD_TILE_YIELD_{MIN,MAX} (1-5) so a colony can't sit on
+            # one tile through the early game.
+            return 'food', float(rng.randint(FOOD_TILE_YIELD_MIN, FOOD_TILE_YIELD_MAX))
         if terrain == 'forest':
             return 'wood', INITIAL_RESOURCE_AMOUNT['wood']
         if terrain == 'stone':

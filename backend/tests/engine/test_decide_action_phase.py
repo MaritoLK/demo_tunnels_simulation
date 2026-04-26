@@ -16,7 +16,7 @@ def _colony(growing=0):
                         growing_count=growing)
 
 
-def _fresh_agent(x=2, y=2):
+def _fresh_agent(x=3, y=3):
     a = Agent('A', x, y, agent_id=1, colony_id=1)
     a.hunger = 80.0
     a.energy = 80.0
@@ -27,7 +27,7 @@ def _fresh_agent(x=2, y=2):
 
 def test_day_phase_harvest_wins_over_plant_when_on_mature_tile():
     w = _grass_world()
-    w.get_tile(2, 2).crop_state = 'mature'
+    w.get_tile(3, 3).crop_state = 'mature'
     a = _fresh_agent()
     assert decide_action(a, w, _colony(), 'day').action == 'harvest'
 
@@ -40,7 +40,7 @@ def test_day_phase_plant_chosen_on_empty_tile():
 
 def test_day_phase_growing_tile_skips_both():
     w = _grass_world()
-    w.get_tile(2, 2).crop_state = 'growing'
+    w.get_tile(3, 3).crop_state = 'growing'
     a = _fresh_agent()
     action = decide_action(a, w, _colony(), 'day').action
     assert action in ('socialise', 'explore')
@@ -75,7 +75,7 @@ def test_dawn_phase_off_camp_is_productive():
     grass tile). Forcing step_to_camp made the demo feel flat — see
     'remove forced returns' change."""
     w = _grass_world()
-    a = _fresh_agent(x=2, y=2)
+    a = _fresh_agent(x=3, y=3)
     c = _colony()
     assert decide_action(a, w, c, 'dawn').action == 'plant'
 
@@ -84,7 +84,7 @@ def test_dusk_phase_is_productive():
     """Post-rework: dusk no longer forces step_to_camp. Agents keep
     working until night, when they sleep where they stand."""
     w = _grass_world()
-    a = _fresh_agent(x=2, y=2)
+    a = _fresh_agent(x=3, y=3)
     assert decide_action(a, w, _colony(), 'dusk').action == 'plant'
 
 
@@ -96,16 +96,25 @@ def test_night_phase_rests_outdoors_anywhere():
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
     assert decide_action(a, w, _colony(), 'night').action == 'rest_outdoors'
-    a_field = _fresh_agent(x=2, y=2)  # off camp
+    a_field = _fresh_agent(x=3, y=3)  # off camp
     assert decide_action(a_field, w, _colony(), 'night').action == 'rest_outdoors'
 
 
 def test_dawn_on_camp_full_hunger_is_productive():
     """Post-rework: at-camp agent at dawn who can't eat falls through
-    to day-chain productivity instead of sham-resting. Planting on an
-    empty camp tile is the natural choice."""
+    to day-chain productivity instead of sham-resting. The camp tile
+    itself is no longer plant-eligible (the house sprite renders
+    there); the natural choice is exploring out toward the field area
+    or wider map. Either way the action must be NON-IDLE."""
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
     a.hunger = needs.NEED_MAX  # can't eat
     c = _colony()
-    assert decide_action(a, w, c, 'dawn').action == 'plant'
+    decision = decide_action(a, w, c, 'dawn')
+    assert decision.action != 'rest', (
+        f'sham-rest regression — got {decision.action!r}'
+    )
+    # Plant is NOT valid on the camp tile; the at-camp full-hunger
+    # agent should drift productively (explore). Pinned to catch a
+    # regression where we silently let plant fire on the camp again.
+    assert decision.action != 'plant'

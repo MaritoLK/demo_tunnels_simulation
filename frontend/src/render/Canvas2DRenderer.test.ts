@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Canvas2DRenderer, pickVariant } from './Canvas2DRenderer';
 import type { FrameSnapshot } from './Renderer';
 
@@ -201,15 +201,183 @@ describe('Canvas2DRenderer — colony decorations', () => {
 });
 
 
+describe('Canvas2DRenderer — lifecycle fade applies to overlays', () => {
+  // Regression: lifecycleFade alpha used to apply only to the body
+  // sprite/disc. Halo, label, cargo pip, shadow stayed at full alpha
+  // during fade-in/out, producing 250 ms of "ghost body with fully
+  // opaque hovering halo + label" right after sim load — the visual
+  // contradiction lifecycleFade was supposed to prevent.
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+  });
+
+  function alphaCapturingSpy(): { spy: CtxSpy; alphaAt: Map<string, number[]> } {
+    const spy = makeCtxSpy();
+    const alphaAt = new Map<string, number[]>();
+    // Real canvas save/restore preserves globalAlpha; the default vi.fn()
+    // mocks do not. Without a state stack, an inner ctx.globalAlpha
+    // assignment leaks past the matching restore() and pollutes the
+    // outer wrap, so this test would lie about which alpha each draw
+    // call actually saw.
+    const stack: number[] = [];
+    spy.save = vi.fn(() => { stack.push(spy.globalAlpha); });
+    spy.restore = vi.fn(() => {
+      const a = stack.pop();
+      if (a !== undefined) spy.globalAlpha = a;
+    });
+    const record = (key: string) => {
+      const arr = alphaAt.get(key) ?? [];
+      arr.push(spy.globalAlpha);
+      alphaAt.set(key, arr);
+    };
+    spy.fill = vi.fn(() => record('fill'));
+    spy.stroke = vi.fn(() => record('stroke'));
+    spy.fillText = vi.fn(() => record('fillText'));
+    return { spy, alphaAt };
+  }
+
+  it('label, halo, cargo pip, and shadow share lifecycleAlpha with the body', () => {
+    const { spy, alphaAt } = alphaCapturingSpy();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      () => spy as unknown as CanvasRenderingContext2D,
+    );
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(64, 64);
+    r.drawFrame(makeSnap({
+      // Big enough to render the label (LABEL_MIN_TILE_PX = 14).
+      tilePx: 32,
+      colonies: [
+        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0, sprite_palette: 'Red' },
+      ],
+      agents: [
+        {
+          id: 7,
+          name: 'Test-Agent',
+          x: 0,
+          y: 0,
+          health: 100,
+          hunger: 80,
+          energy: 80,
+          social: 80,
+          age: 0,
+          state: 'foraging',
+          alive: true,
+          colony_id: 1,
+          cargo_food: 4, cargo_wood: 0, cargo_stone: 0,
+          decision_reason: '',
+        },
+      ],
+      selectedAgentId: null,
+    }));
+    // First render = lifecycle fade-in just started, so alpha = 0. The
+    // label, the colony halo, the cargo pip, and the shadow ellipse must
+    // all draw at < 1 globalAlpha — proving they sit inside the same
+    // lifecycle wrap as the body sprite/disc.
+    const labelAlphas = alphaAt.get('fillText') ?? [];
+    expect(labelAlphas.length).toBeGreaterThan(0);
+    for (const a of labelAlphas) expect(a).toBeLessThan(1);
+
+    const fills = alphaAt.get('fill') ?? [];
+    // At least one overlay-class fill (shadow, cargo pip, gloss, halo)
+    // had to land at < 1 alpha — pre-fix every one of these was 1.
+    expect(fills.some((a) => a < 1)).toBe(true);
+
+    r.dispose();
+  });
+});
+
+
+describe('Canvas2DRenderer — interpolation across snapshots', () => {
+  // Regression: sampleTime used to be anchored to snap.serverNowMs minus
+  // a fixed offset. Server time only advances when a new snapshot
+  // arrives, so the interp fraction was frozen between snaps — the
+  // agent popped to a fixed position when each snap arrived and then
+  // sat still until the next one (the "teleport every tick" feel).
+  // Fix: anchor to performance.now() and adapt the offset to the
+  // observed snap interval, so the sample clock walks 1 ms per ms and
+  // the agent is animating every frame.
+  let host: HTMLDivElement;
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    nowSpy?.mockRestore();
+  });
+
+  it('agent body x advances smoothly between server snapshots', () => {
+    let mockNow = 0;
+    nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => mockNow);
+
+    // Capture shadow ellipse cx — line 1 is the body's drop shadow,
+    // its cx is the first thing drawn per agent and reflects the
+    // interpolated position before any other state churn.
+    const ctxSpy = makeCtxSpy();
+    const ellipseCx: number[] = [];
+    ctxSpy.ellipse = vi.fn((cx: number) => { ellipseCx.push(cx); });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      () => ctxSpy as unknown as CanvasRenderingContext2D,
+    );
+
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(64, 64);
+
+    // Two snaps 1000 ms apart (client time). Agent steps from x=0 to x=10.
+    mockNow = 0;
+    r.ingestSnapshot({ serverTimeMs: 1, tick: 1, agents: [{ id: 7, x: 0, y: 0 }] });
+    mockNow = 1000;
+    r.ingestSnapshot({ serverTimeMs: 2, tick: 2, agents: [{ id: 7, x: 10, y: 0 }] });
+
+    function bodyAgent(x: number) {
+      return [
+        { id: 7, name: 'A', x, y: 0, health: 100, hunger: 80, energy: 80,
+          social: 80, age: 0, state: 'idle', alive: true, colony_id: null,
+          decision_reason: '' },
+      ];
+    }
+
+    // Draw at three increasing client times. Ellipse cx must climb
+    // monotonically — equal cx across frames would be the teleport bug.
+    mockNow = 1100;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1100 = ellipseCx[0];
+
+    mockNow = 1500;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1500 = ellipseCx[0];
+
+    mockNow = 1900;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1900 = ellipseCx[0];
+
+    expect(cxAt1500).toBeGreaterThan(cxAt1100);
+    expect(cxAt1900).toBeGreaterThan(cxAt1500);
+
+    r.dispose();
+  });
+});
+
+
 describe('pickVariant', () => {
-  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo: 0 };
+  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo_food: 0, cargo_wood: 0, cargo_stone: 0 };
 
   it('returns idle when stationary with no cargo', () => {
     expect(pickVariant(baseAgent, { x: 1, y: 1 })).toBe('idle');
   });
 
   it('returns idleMeat when stationary with cargo', () => {
-    expect(pickVariant({ ...baseAgent, cargo: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
+    expect(pickVariant({ ...baseAgent, cargo_food: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
   });
 
   it('returns run when moving, no cargo', () => {
@@ -217,7 +385,7 @@ describe('pickVariant', () => {
   });
 
   it('returns runMeat when moving with cargo', () => {
-    expect(pickVariant({ ...baseAgent, cargo: 3 }, { x: 0, y: 1 })).toBe('runMeat');
+    expect(pickVariant({ ...baseAgent, cargo_wood: 3 }, { x: 0, y: 1 })).toBe('runMeat');
   });
 
   it('returns idle when prev is undefined (first frame)', () => {

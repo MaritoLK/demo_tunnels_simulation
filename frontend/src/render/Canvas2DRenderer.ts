@@ -25,8 +25,7 @@
 import type { Renderer, FrameSnapshot } from './Renderer';
 import { CARRY_MAX, type Terrain } from '../api/types';
 import {
-  HOUSE_FRAME_H,
-  HOUSE_FRAME_W,
+  HOUSE_TIER_DIMS,
   loadSprites,
   PAWN_FRAME_PX,
   SOURCE_TILE_PX,
@@ -36,7 +35,7 @@ import {
   type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
-import { FRAME_MS, FRAMES_PER_CYCLE, STATE_VISUALS } from './animConfig';
+import { FRAME_MS, FRAMES_PER_VARIANT, STATE_VISUALS } from './animConfig';
 import { InterpBuffer } from './interpBuffer';
 import { LifecycleFade } from './lifecycleFade';
 
@@ -79,6 +78,20 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
 // appear/disappear at the same zoom level.
 const LABEL_MIN_TILE_PX = 14;
 
+// How long a d20 forage chip stays on screen above the rolling agent.
+// 1500 ms is long enough for the eye to land on the number and parse
+// "1d20 = N" before it fades, short enough that two consecutive rolls
+// from the same agent don't stack visually. Chip alpha lerps to 0 over
+// the window so the disappearance reads as a fade, not a snap.
+const DICE_CHIP_DURATION_MS = 1500;
+
+// How long a footprint dot lingers on a tile after an agent leaves it.
+// 2000 ms = ~2 ticks at 1× speed, long enough to read the trail of a
+// patrol but short enough that the world doesn't gradually fill with
+// dots in a long demo. Alpha lerps to 0 across the window so old
+// footprints fade out instead of cutting.
+const FOOTPRINT_DURATION_MS = 2000;
+
 /**
  * Pick the pawn animation variant for `agent`. Motion comes from
  * position delta (not state string) — the engine's STATE_FORAGING
@@ -86,11 +99,11 @@ const LABEL_MIN_TILE_PX = 14;
  * so a state-based motion check would lope motionless foragers.
  */
 export function pickVariant(
-  agent: { state: string; cargo?: number; x: number; y: number },
+  agent: { state: string; cargo_food?: number; cargo_wood?: number; cargo_stone?: number; x: number; y: number },
   prev: { x: number; y: number } | undefined,
 ): PawnVariant {
   const moving = prev !== undefined && (agent.x !== prev.x || agent.y !== prev.y);
-  const carrying = (agent.cargo ?? 0) > 0;
+  const carrying = ((agent.cargo_food ?? 0) + (agent.cargo_wood ?? 0) + (agent.cargo_stone ?? 0)) > 0;
   if (moving && carrying) return 'runMeat';
   if (moving) return 'run';
   if (carrying) return 'idleMeat';
@@ -127,6 +140,17 @@ export class Canvas2DRenderer implements Renderer {
   // Per-agent animation state — lazily created on first sight.
   // Swept at end of each draw so departed/dead agents don't accumulate.
   private animStates: Map<number, AnimState> = new Map();
+  // Footprint trail: each entry is a tile an agent recently left
+  // behind. Rendered as a small fading dot under the world overlay so
+  // the user sees the path agents took rather than just where they
+  // are. Bounded by FOOTPRINT_DURATION_MS — anything older is purged
+  // every frame so the array doesn't grow unbounded across long sims.
+  private footprints: Array<{ id: number; x: number; y: number; bornMs: number }> = [];
+  // Latest tile position observed per agent at ingest. Comparing this
+  // tick's snap to last tick's tells us which agents moved; we drop a
+  // footprint at their OLD coords. Keyed by agent id so the data is
+  // robust against the agent list being reordered between snaps.
+  private lastIngestedPositions: Map<number, { x: number; y: number }> = new Map();
   // Wall-clock time of the previous drawFrame call — used to compute dt
   // for frame-cycling. 0 on first frame (dt = 0, no advance).
   private lastFrameAt = 0;
@@ -173,9 +197,34 @@ export class Canvas2DRenderer implements Renderer {
   }
 
   /** Push a new server snapshot into the interpolation buffer.
-   *  Called by WorldCanvas whenever a stream or poll snapshot arrives. */
+   *  Called by WorldCanvas whenever a stream or poll snapshot arrives.
+   *
+   *  The buffer is keyed in CLIENT receive time (`performance.now()`),
+   *  not server clock. Server time is frozen between snaps, so anchoring
+   *  the renderer's sample clock to it left the interp fraction stuck —
+   *  agents teleported to the latest position the moment a snap arrived
+   *  and then sat still until the next one. Client time advances 1 ms
+   *  per 1 ms, so a sample clock derived from `performance.now()` walks
+   *  smoothly between snaps and the agent actually walks the tile. */
   ingestSnapshot(snap: { serverTimeMs: number; tick: number; agents: Array<{ id: number; x: number; y: number }> }): void {
-    this.interpBuffer.push(snap);
+    const nowMs = performance.now();
+    // Footprint capture: any agent whose tile coords changed since the
+    // last ingest leaves a trail dot at their OLD position. Done at
+    // ingest time (one footprint per server tick) rather than per
+    // render frame so the trail tracks engine truth — render-time
+    // capture would multiply footprints by FPS.
+    for (const agent of snap.agents) {
+      const prev = this.lastIngestedPositions.get(agent.id);
+      if (prev && (prev.x !== agent.x || prev.y !== agent.y)) {
+        this.footprints.push({ id: agent.id, x: prev.x, y: prev.y, bornMs: nowMs });
+      }
+      this.lastIngestedPositions.set(agent.id, { x: agent.x, y: agent.y });
+    }
+    this.interpBuffer.push({
+      serverTimeMs: nowMs,
+      tick: snap.tick,
+      agents: snap.agents,
+    });
   }
 
   drawFrame(snap: FrameSnapshot): void {
@@ -183,18 +232,20 @@ export class Canvas2DRenderer implements Renderer {
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, selectedTile, reducedMotion,
+      selectedAgentId, selectedTile, reducedMotion, recentForageRolls,
     } = snap;
 
-    // Sample the interpolation buffer at render-time. The render time
-    // is server_time_ms - INTERP_DELAY_MS, which keeps renderTime between
-    // two known snapshots — always interpolating measured truths rather
-    // than extrapolating past the newest one.
+    // Sample the interpolation buffer one tick interval behind `now`, so
+    // sampleTime walks from the older snap's receive time forward to the
+    // newer's at 1 ms/ms. INTERP_DELAY adapts to the observed snap gap
+    // (≈ tick interval at the current sim speed) — keeps t in [0, 1]
+    // across the full interval so the agent is animating every frame
+    // instead of pinned at the head of each tick. Falls back to a
+    // single-tick default while the buffer is still warming.
     const now = performance.now();
-    const INTERP_DELAY_MS = 100;
-    const sampleTimeMs = snap.serverNowMs != null
-      ? snap.serverNowMs - INTERP_DELAY_MS
-      : now - INTERP_DELAY_MS;
+    const INTERP_DELAY_FALLBACK_MS = 250;
+    const interpDelayMs = this.interpBuffer.lastSnapInterval() ?? INTERP_DELAY_FALLBACK_MS;
+    const sampleTimeMs = now - interpDelayMs;
     const sample = this.interpBuffer.sampleAt(sampleTimeMs);
 
     // Present ids = whoever the buffer is producing a position for
@@ -223,7 +274,7 @@ export class Canvas2DRenderer implements Renderer {
       } else {
         anim.elapsedMs += dt;
         while (anim.elapsedMs >= FRAME_MS) {
-          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_CYCLE;
+          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_VARIANT[anim.variant];
           anim.elapsedMs -= FRAME_MS;
         }
       }
@@ -252,7 +303,7 @@ export class Canvas2DRenderer implements Renderer {
         const py = y * tilePx;
 
         if (sprites) {
-          drawTerrainSprite(ctx, sprites, tile.terrain, px, py, tilePx);
+          drawTerrainSprite(ctx, sprites, tile.terrain, tile.resource_type, tile.resource_amount, px, py, tilePx);
           if (tile.resource_type === 'food' && tile.resource_amount > 0) {
             // Meat sprite for food, drawn at 50% tile centred so the
             // resource reads as "an item on the tile" rather than
@@ -274,14 +325,25 @@ export class Canvas2DRenderer implements Renderer {
             // count down 1-for-1 with forages.
             const units = Math.ceil(tile.resource_amount);
             if (units >= 2 && tilePx >= 14) {
-              drawFoodBadge(ctx, units, px, py, tilePx);
+              drawCountBadge(ctx, units, px, py, tilePx, '#ffe9c4');
             }
           }
-          // Wood/stone: no overlay. The bush/rock decoration sprite
-          // already communicates the resource; a dot on top produces
-          // the "brown circle above tree / white circle on rock" bug
-          // where the resource pip visually fights the decoration.
-          // Dots are only for the procedural fallback path below.
+          // Wood / stone: ×N badge in the resource's tint. Same shape
+          // as food's: outline-then-fill so digits read against any
+          // terrain. The user wanted the count visible at a glance —
+          // an agent looking at a forest can tell how many chops are
+          // left before the tile becomes a stump.
+          if (tile.resource_type === 'wood' && tile.resource_amount > 0) {
+            const units = Math.ceil(tile.resource_amount);
+            if (units >= 2 && tilePx >= 14) {
+              drawCountBadge(ctx, units, px, py, tilePx, '#cdeac0');
+            }
+          } else if (tile.resource_type === 'stone' && tile.resource_amount > 0) {
+            const units = Math.ceil(tile.resource_amount);
+            if (units >= 2 && tilePx >= 14) {
+              drawCountBadge(ctx, units, px, py, tilePx, '#e0e6ee');
+            }
+          }
         } else {
           // Procedural fallback — flat biome fill plus deterministic
           // corner speckle. Kept verbatim so tests and screenshots
@@ -301,6 +363,63 @@ export class Canvas2DRenderer implements Renderer {
             drawResourceDot(ctx, tile.resource_type, px, py, tilePx);
           }
         }
+      }
+    }
+
+    // Fog of war veil + per-colony tint. Each colony tracks its own
+    // `explored` set (engine-side, cumulative across the run). For each
+    // colony in turn, paint a faint tint of their color over their
+    // explored tiles — overlapping tints mix additively so contested
+    // territory reads visibly different from a single-colony zone. The
+    // veil pass then drops opaque shell-color over cells that NO colony
+    // has touched, so the world beyond every agent's reach looks unknown
+    // rather than lit-but-empty.
+    const exploredCells = new Set<number>();
+    for (const c of colonies) {
+      if (!c.explored) continue;
+      for (const [x, y] of c.explored) {
+        exploredCells.add(y * width + x);
+      }
+    }
+    if (exploredCells.size > 0) {
+      // Per-colony tint pass. Alpha kept low (0.18) so terrain shape
+      // still reads through; the tint is a hue cue, not a wash.
+      for (const c of colonies) {
+        if (!c.explored || c.explored.length === 0) continue;
+        ctx.fillStyle = c.color;
+        ctx.globalAlpha = 0.18;
+        for (const [x, y] of c.explored) {
+          ctx.fillRect(x * tilePx, y * tilePx, tilePx, tilePx);
+        }
+      }
+      ctx.globalAlpha = 1.0;
+      // Veil over un-explored cells.
+      ctx.fillStyle = '#0e1220';
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (exploredCells.has(y * width + x)) continue;
+          ctx.fillRect(x * tilePx, y * tilePx, tilePx, tilePx);
+        }
+      }
+    }
+
+    // Footprint trail — short-lived translucent dots on tiles agents
+    // recently left. Captured at ingest time (one entry per server
+    // tick per moving agent), purged here when older than
+    // FOOTPRINT_DURATION_MS so the array doesn't grow forever.
+    // Rendered after fog so trails on un-explored tiles aren't
+    // visible (footprints are added from snap.agents which the
+    // colony has by definition revealed; the visibility is already
+    // implied but the order keeps it explicit).
+    if (this.footprints.length > 0) {
+      this.footprints = this.footprints.filter((fp) => now - fp.bornMs < FOOTPRINT_DURATION_MS);
+      const fpR = Math.max(2, tilePx * 0.13);
+      for (const fp of this.footprints) {
+        const fade = 1 - (now - fp.bornMs) / FOOTPRINT_DURATION_MS;
+        ctx.fillStyle = `rgba(180,160,120,${(fade * 0.5).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(fp.x * tilePx + tilePx / 2, fp.y * tilePx + tilePx / 2, fpR, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
@@ -335,15 +454,31 @@ export class Canvas2DRenderer implements Renderer {
       ctx.arc(campCx, campCy, ringR, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
-      const houseSprite = sprites ? sprites.houses[colony.name] : undefined;
+      const houseTriplet = sprites ? sprites.houses[colony.name] : undefined;
+      // Tier index — clamp to the available sprite count so a future
+      // backend bump beyond MAX_HOUSE_TIER doesn't crash the render.
+      // Falls back to 0 when the field is undefined (older snapshots
+      // during a rolling deploy).
+      const tier = Math.max(0, Math.min(
+        houseTriplet ? houseTriplet.length - 1 : 0,
+        colony.tier ?? 0,
+      ));
+      const houseSprite = houseTriplet ? houseTriplet[tier] : undefined;
+      // Per-tier sprite dimensions — Monastery is 3w × 5t, Castle is
+      // 5w × 4t, so each footprint differs from House1's 2w × 3t.
+      // The draw uses the actual source-image rect so we don't crop
+      // the upper-left corner of the larger sprites. Anchored bottom-
+      // center on the camp tile so the building's front step lands
+      // on the camp tile regardless of footprint.
+      const dims = HOUSE_TIER_DIMS[tier] ?? HOUSE_TIER_DIMS[0];
       if (sprites && houseSprite) {
-        const houseW = tilePx * 2;
-        const houseH = tilePx * (HOUSE_FRAME_H / HOUSE_FRAME_W) * 2;
+        const houseW = tilePx * dims.tilesW;
+        const houseH = tilePx * dims.tilesH;
         const houseX = px + tilePx / 2 - houseW / 2;
         const houseY = py + tilePx - houseH;
         ctx.drawImage(
           houseSprite,
-          0, 0, HOUSE_FRAME_W, HOUSE_FRAME_H,
+          0, 0, dims.srcW, dims.srcH,
           houseX, houseY, houseW, houseH,
         );
         // Thin colored halo ring under the house so team reading still
@@ -370,29 +505,40 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Crop overlay — paired dots, same style across states:
-    //   growing → green dot (planted, not yet ripe)
-    //   mature  → yellow dot (harvestable)
-    // Earlier revisions drew a bush sprite for 'growing' when the atlas
-    // was loaded, but the sprite collided visually with wild bush
-    // decorations on forest tiles. Uniform-dot style (green↔yellow)
-    // reads like a simple state change rather than two different things.
+    // Crop overlay — Tiny Swords bush sprites:
+    //   growing → Bushe4 (leafy green, sprouting)
+    //   mature  → Bushe3 (golden, full canopy)
+    // Source frames are 128×128 with the bush body centred and ~16px
+    // padding — same crop math as the forest decoration pass below.
+    // Falls back to colored circles when the atlas is still loading
+    // so the first paint after a fresh load isn't a blank field.
     for (let y = 0; y < height; y++) {
       const row = tiles[y];
       if (!row) continue;
       for (let x = 0; x < width; x++) {
         const t = row[x];
         if (!t || t.crop_state === 'none') continue;
-        const ccx = x * tilePx + tilePx / 2;
-        const ccy = y * tilePx + tilePx / 2;
-        const cr = Math.max(2, tilePx * 0.22);
-        ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
-        ctx.beginPath();
-        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-        ctx.lineWidth = Math.max(1, tilePx * 0.06);
-        ctx.stroke();
+        const px = x * tilePx;
+        const py = y * tilePx;
+        if (sprites) {
+          const sheet = t.crop_state === 'mature'
+            ? sprites.cropMature
+            : sprites.cropGrowing;
+          // Tight 16,16,96,96 crop on the centred bush body — same
+          // recipe as the forest decoration pass.
+          ctx.drawImage(sheet, 16, 16, 96, 96, px, py, tilePx, tilePx);
+        } else {
+          const ccx = px + tilePx / 2;
+          const ccy = py + tilePx / 2;
+          const cr = Math.max(2, tilePx * 0.22);
+          ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+          ctx.beginPath();
+          ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          ctx.lineWidth = Math.max(1, tilePx * 0.06);
+          ctx.stroke();
+        }
       }
     }
 
@@ -444,6 +590,17 @@ export class Canvas2DRenderer implements Renderer {
       // at ~0.6 zoom renders agents as ~4-px dots that blur into the
       // resource pips — can't tell them apart at a glance.
       const r = Math.max(4, tilePx * 0.4);
+
+      // One outer save/restore per agent so lifecycleAlpha applies to
+      // the whole stack — body, shadow, halo, label, cargo pip, state
+      // icon, selection ring. Without this, only the body sprite/disc
+      // faded in/out and the overlays stayed fully opaque, producing
+      // ~250 ms of "ghost body with hovering opaque label" right after
+      // sim load. The body block's own save/restore composes fine: it
+      // overwrites globalAlpha (e.g. 0.35 * lifecycleAlpha for dead),
+      // then restores back to lifecycleAlpha — overlays inherit it.
+      ctx.save();
+      ctx.globalAlpha = lifecycleAlpha;
 
       // Shadow on the ground tile for diorama depth.
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -533,7 +690,13 @@ export class Canvas2DRenderer implements Renderer {
       // (minimum visible even at 1 unit, max at CARRY_MAX) so the
       // pouch visibly "swells" between forage and deposit. Skipped
       // for dead agents — corpses don't haul.
-      const cargo = a.alive ? a.cargo ?? 0 : 0;
+      // Compose the pouch fullness from all three resource pouches —
+      // weight (food*1 + wood*2 + stone*3) so a heavy stone trip
+      // visually swells the satchel just like a full food haul.
+      const food = a.alive ? a.cargo_food ?? 0 : 0;
+      const wood = a.alive ? a.cargo_wood ?? 0 : 0;
+      const stone = a.alive ? a.cargo_stone ?? 0 : 0;
+      const cargo = food * 1 + wood * 2 + stone * 3;
       if (cargo > 0) {
         const fill = Math.min(1, cargo / CARRY_MAX);
         const pipR = Math.max(2, r * (0.18 + 0.22 * fill));
@@ -594,7 +757,53 @@ export class Canvas2DRenderer implements Renderer {
         ctx.fillText(meta.label, cx, labelY);
       }
 
-      if (a.id === selectedAgentId) {
+      // Death telegraph — wounded agents (health < threshold) flash a
+      // small 💔 above the colony halo so the user reads "this one is
+      // in trouble" without having to open the agent panel. Drawn over
+      // the cargo-pip side opposite to keep the two badges from
+      // colliding. Skip dead agents — the fade already says "stopped"
+      // so a heart on a corpse would over-stuff the visual.
+      const HEALTH_TELEGRAPH_THRESHOLD = 30;
+      if (a.alive && a.health < HEALTH_TELEGRAPH_THRESHOLD && tilePx >= LABEL_MIN_TILE_PX) {
+        const heartSize = Math.max(10, Math.floor(tilePx * 0.36));
+        ctx.font = `${heartSize}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('💔', cx - r * 0.55, cy - r * 0.55);
+      }
+
+      // d20 dice chip — flashes the most recent forage roll above the
+      // agent for DICE_CHIP_DURATION_MS, fading to zero alpha by the
+      // end of the window. Crit (20) and crit-fail (1) get distinct
+      // tints so the rare beats read at a glance without needing a
+      // legend. Drawn above the state label (cy - r*2.0) so it doesn't
+      // collide with the action word.
+      const rollEntry = recentForageRolls?.get(a.id);
+      if (rollEntry && tilePx >= LABEL_MIN_TILE_PX) {
+        const elapsed = now - rollEntry.receivedAtMs;
+        if (elapsed >= 0 && elapsed < DICE_CHIP_DURATION_MS) {
+          const fade = 1 - elapsed / DICE_CHIP_DURATION_MS;
+          let chipColor = '#ffffff';
+          if (rollEntry.roll === 1) chipColor = '#ff5555';
+          else if (rollEntry.roll === 20) chipColor = '#ffd23f';
+          const fontPx = Math.max(10, Math.floor(tilePx * 0.36));
+          ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          const chipY = cy - r * 2.0;
+          const text = `🎲 ${rollEntry.roll}`;
+          ctx.save();
+          ctx.globalAlpha *= fade;
+          ctx.lineWidth = Math.max(2, tilePx * 0.1);
+          ctx.strokeStyle = 'rgba(10,12,18,0.85)';
+          ctx.strokeText(text, cx, chipY);
+          ctx.fillStyle = chipColor;
+          ctx.fillText(text, cx, chipY);
+          ctx.restore();
+        }
+      }
+
+      if (selectedAgentId !== null && a.id === selectedAgentId) {
         const ringGap = Math.max(2, tilePx * 0.22);
         ctx.strokeStyle = '#ff7b3b';
 
@@ -653,6 +862,7 @@ export class Canvas2DRenderer implements Renderer {
           ctx.restore();
         }
       }
+      ctx.restore();
     }
 
     // Snapshot the interpolated positions so next frame's anim-state loop
@@ -685,6 +895,8 @@ export class Canvas2DRenderer implements Renderer {
     this.lastHeightPx = -1;
     this.lastFrameSample.clear();
     this.animStates.clear();
+    this.footprints = [];
+    this.lastIngestedPositions.clear();
     this.lastFrameAt = 0;
   }
 
@@ -698,7 +910,11 @@ export class Canvas2DRenderer implements Renderer {
     const glyph = STATE_VISUALS[state]?.glyph ?? '';
     if (!glyph) return;                   // draw-guard — no fillText('')
     ctx.save();
-    ctx.globalAlpha = phase === 'night' ? 0.4 : 1.0;
+    // Compose night-dim with whatever alpha the caller already pushed
+    // (lifecycleAlpha at the per-agent wrap, or 1.0 outside it). A bare
+    // assignment would clobber the lifecycle fade and snap the icon to
+    // full opacity even while its agent is still fading in.
+    if (phase === 'night') ctx.globalAlpha *= 0.4;
     ctx.font = '18px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffffff';
@@ -717,6 +933,8 @@ function drawTerrainSprite(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteAtlas,
   terrain: Terrain,
+  resourceType: string | null,
+  resourceAmount: number,
   px: number,
   py: number,
   tilePx: number,
@@ -751,16 +969,33 @@ function drawTerrainSprite(
   );
   const decoration = TERRAIN_DECORATION[terrain];
   if (decoration === 'bush') {
-    // Tight crop on the bush body inside the 128×128 frame. The
-    // visible bush occupies roughly the central 96×96 region with
-    // transparent padding around it — drawing the full frame at 1×1
-    // tile wastes ~25% of the tile on padding, leaving the bush
-    // smaller than the wood-resource dot and visually invisible at
-    // fit-zoom. A tight 16,16,96,96 crop makes the bush fill the tile.
+    // Forest tiles read as a Tree1 sprite while wood remains, and
+    // as a Stump2 sprite once chopped. The user wanted depletion
+    // visible on the map — see the lumberjack stripe its way
+    // through a forest by watching trees become stumps.
+    //
+    // Source layouts: Tree1.png is 1536×256 = 8 frames × 192×256
+    // (frame 0 is the still pose); Stump 2.png is 192×256 single
+    // frame. Both have the body anchored to the LOWER portion of
+    // the frame with transparent space above (foliage rises into
+    // the upper area for trees, sits at ground level for stumps).
+    // Drawing the whole frame into a tile-size box keeps the trunk
+    // grounded; we extend slightly above the tile (1.4× tile height,
+    // anchored bottom-center) so the canopy reads at a glance
+    // without colliding with the row above.
+    const sprite = (resourceType === 'wood' && resourceAmount > 0)
+      ? sprites.tree
+      : sprites.stump;
+    const frameW = 192;
+    const frameH = 256;
+    const drawH = tilePx * 1.4;
+    const drawW = drawH * (frameW / frameH);
+    const drawX = px + tilePx / 2 - drawW / 2;
+    const drawY = py + tilePx - drawH;
     ctx.drawImage(
-      sprites.bush,
-      16, 16, 96, 96,
-      px, py, tilePx, tilePx,
+      sprite,
+      0, 0, frameW, frameH,
+      drawX, drawY, drawW, drawH,
     );
   } else if (decoration === 'rock') {
     ctx.drawImage(
@@ -793,14 +1028,15 @@ function drawResourceDot(
 // "×N" badge in the bottom-right of the food tile, so the player can
 // see the stack shrink forage-by-forage rather than wait for the whole
 // sprite to disappear on the last serving.
-function drawFoodBadge(
+function drawCountBadge(
   ctx: CanvasRenderingContext2D,
-  servings: number,
+  units: number,
   px: number,
   py: number,
   tilePx: number,
+  fillColor: string,
 ): void {
-  const label = `×${servings}`;
+  const label = `×${units}`;
   const fontPx = Math.max(9, Math.floor(tilePx * 0.32));
   ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
   ctx.textAlign = 'right';
@@ -811,6 +1047,6 @@ function drawFoodBadge(
   ctx.lineWidth = Math.max(2, Math.floor(tilePx * 0.1));
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.strokeText(label, tx, ty);
-  ctx.fillStyle = '#ffe9c4';
+  ctx.fillStyle = fillColor;
   ctx.fillText(label, tx, ty);
 }

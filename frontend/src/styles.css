@@ -1017,7 +1017,7 @@ body::after {
 /* --- Colony panel ------------------------------------------------------- */
 
 .colony-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   padding: 4px 2px;
   font-family: ui-monospace, monospace; font-size: 12px;
 }
@@ -1026,7 +1026,20 @@ body::after {
   border: 1px solid rgba(0,0,0,0.25);
 }
 .colony-row__name { font-weight: 600; min-width: 54px; }
-.colony-row__stat { opacity: 0.78; }
+.colony-row__stat { opacity: 0.78; white-space: nowrap; }
+/* Upgrade requirements indicator — drops onto its own row beneath
+   the stat columns so the 300-px sidebar can fit it without
+   clipping. Slightly muted by default; the per-resource sub-spans
+   turn bright green once that side of the gate is met so the eye
+   lands on a ready upgrade. */
+.colony-row__upgrade {
+  flex-basis: 100%;
+  padding-left: 24px;
+  opacity: 0.85;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.colony-row__met { color: #6dd24a; font-weight: 600; }
 
 /* --- Agent tooltip ------------------------------------------------------ */
 

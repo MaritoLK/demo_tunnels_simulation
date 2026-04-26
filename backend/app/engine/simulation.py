@@ -5,7 +5,7 @@ import random
 from .agent import Agent, tick_agent
 from .colony import EngineColony
 from .world import World
-from . import config, cycle
+from . import config, cycle, skill
 
 
 def _sub_seed(master, key):
@@ -64,6 +64,48 @@ class Simulation:
                                    growing_count=0,
                                    sprite_palette='Blue')
             self.colonies = {None: default}
+        self._ensure_walkable_camp_tiles()
+
+    def _ensure_walkable_camp_tiles(self):
+        """Carve a walkable 3×3 grass bubble around each colony's camp.
+
+        World generation picks terrain by biome distance and the
+        default-corner camp positions (see services._default_camp_positions)
+        can roll any terrain — including water. Two failure modes traced
+        in the 2026-04-26 1500-tick diagnostic:
+
+          1. Camp tile itself is water — agents spawn on a non-walkable
+             tile, can't act. Hunger drains; they starve at ~tick 270.
+          2. Camp tile is a 1-tile grass island in a water lake — agents
+             can plant but every cardinal neighbour is water, so the
+             BFS frontier scout returns no targets. Same outcome.
+
+        Clearing the 3×3 around the camp guarantees the agents have at
+        least 8 walkable neighbours to push off into, breaking the
+        island. Resources on the cleared tiles are stripped — camps
+        are colony infrastructure, not landscape, and a phantom food
+        cache on a "water that became grass" tile would forage as if
+        it were a real cluster. One-shot at __init__: camps don't move.
+        """
+        for colony in self.colonies.values():
+            cx, cy = colony.camp_x, colony.camp_y
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    tx, ty = cx + dx, cy + dy
+                    if not self.world.in_bounds(tx, ty):
+                        continue
+                    tile = self.world.get_tile(tx, ty)
+                    if tile.is_walkable and tile.resource_type is None:
+                        # Already a clean walkable tile — leave it
+                        # alone so the camp neighbourhood inherits the
+                        # surrounding biome flavor when nothing's broken.
+                        continue
+                    tile.terrain = 'grass'
+                    tile.resource_type = None
+                    tile.resource_amount = 0.0
+                    tile.crop_state = 'none'
+                    tile.crop_growth_ticks = 0
+                    tile.crop_colony_id = None
 
     def snapshot_rng_state(self):
         """JSON-safe snapshot of both sub-stream RNGs for persistence."""
@@ -108,6 +150,7 @@ class Simulation:
     def step(self):
         events = []
         phase = cycle.phase_for(self.current_tick)
+
         self.recompute_growing_counts()
         snapshot = list(self.agents)
         for agent in snapshot:
@@ -120,11 +163,136 @@ class Simulation:
                 event['tick'] = self.current_tick
                 event['agent_id'] = agent.id
                 events.append(event)
+
+        # Dawn-meal reproduction. Runs AFTER the agent tick loop so the
+        # newborn enters the world at age=0 and skips the current tick's
+        # decision pass — they "rest" their first tick, joining the
+        # snapshot only on the next step. Avoids the surprising
+        # behaviour of a freshly-named child immediately deciding to
+        # eat at camp.
+        if phase == 'dawn':
+            events.extend(self._maybe_reproduce())
+
+        # Fog reveal: each non-rogue alive agent paints its colony's
+        # REVEAL_RADIUS square onto colony.explored. Run after the agent
+        # tick loop so the reveal reflects where the agent actually
+        # ended up this tick. Rogue agents skip — no colony tie, no fog
+        # contribution, mirrors the rogue exclusion in the camp branches
+        # of the decision ladder.
+        self._refresh_fog(snapshot)
+
         for event in self.world.tick(phase):
             event['tick'] = self.current_tick
             events.append(event)
         self.current_tick += 1
         return events
+
+    def _maybe_reproduce(self):
+        """Roll dawn-meal reproduction for each colony, return events.
+
+        See config.REPRODUCTION_* for tuning. The per-colony gate is:
+          * food_stock >= REPRODUCTION_FOOD_THRESHOLD
+          * REPRODUCTION_COOLDOWN_TICKS elapsed since last birth
+          * population < MAX_AGENTS_PER_COLONY
+          * at least one alive non-rogue colony agent on the camp tile
+
+        Why these gates: cooldown caps birth rate (otherwise a steady
+        food surplus would carpet the camp in ticks). Pop cap stops
+        unbounded growth. The midwife requirement keeps the trigger
+        tied to an actual home presence — pre-design the user
+        considered the both-on-camp socialise gate but the diagnostic
+        showed that fired only 4 times in 1500 ticks; the single
+        midwife is much more reliable.
+        """
+        born_events = []
+        tick = self.current_tick
+        for colony in self.colonies.values():
+            if colony.id is None:
+                # Default synthesized colony (legacy test path) doesn't
+                # reproduce — keeps unit tests with no explicit colony
+                # untouched.
+                continue
+            if colony.food_stock < config.REPRODUCTION_FOOD_THRESHOLD:
+                continue
+            if (colony.last_reproduction_tick is not None
+                    and tick - colony.last_reproduction_tick
+                    < config.REPRODUCTION_COOLDOWN_TICKS):
+                continue
+            pop = sum(1 for a in self.agents
+                      if a.alive and a.colony_id == colony.id)
+            if pop >= config.tier_benefit(colony, 'pop_cap'):
+                continue
+            # Midwife: at least one alive non-rogue colony member,
+            # location-agnostic. Pre-tuning we required them on (or
+            # adjacent to) the camp tile but the diagnostic showed
+            # agents are scattered in the field at most dawn ticks —
+            # only 3 births fired across 20 demo days. The colony as a
+            # whole is the social unit; any living non-rogue member
+            # carries the colony forward. The newborn still spawns AT
+            # the camp tile, so the visual is a 'baby appears at home'
+            # cue regardless of where the rest of the colony is.
+            midwife = next(
+                (a for a in self.agents
+                 if a.alive and not a.rogue
+                 and a.colony_id == colony.id),
+                None,
+            )
+            if midwife is None:
+                continue
+            # Spawn at camp. ID stays None — the persistence layer
+            # assigns when the agent first hits the DB on the next
+            # commit. Newborn starts well-fed/rested so they don't
+            # immediately starve. Name uses the colony's monotonic
+            # counter so names never collide across the colony's
+            # lifetime, even after deaths free up alive-slot indices.
+            colony.agent_name_counter += 1
+            child = Agent(
+                name=f'{colony.name}-{colony.agent_name_counter}',
+                x=colony.camp_x,
+                y=colony.camp_y,
+                colony_id=colony.id,
+            )
+            self.agents.append(child)
+            colony.food_stock -= config.REPRODUCTION_FOOD_COST
+            colony.last_reproduction_tick = tick
+            born_events.append({
+                'type': 'birthed',
+                'description': f'{child.name} was born at camp',
+                'tick': tick,
+                'agent_id': None,
+                'data': {
+                    'colony_id': colony.id,
+                    'midwife_name': midwife.name,
+                    'name': child.name,
+                    'tile_x': colony.camp_x,
+                    'tile_y': colony.camp_y,
+                },
+            })
+        return born_events
+
+    def _refresh_fog(self, snapshot):
+        width = self.world.width
+        height = self.world.height
+        for agent in snapshot:
+            if not agent.alive or agent.rogue:
+                continue
+            if agent.colony_id is None:
+                continue
+            colony = self.colonies.get(agent.colony_id)
+            if colony is None:
+                continue
+            # Per-agent reveal radius: walk-skill tier (veteran scouts
+            # uncover a wider area) PLUS the colony's camp tier. Each
+            # camp tier adds +1 to the radius — explicit colony-level
+            # progression as a payoff for upgrading.
+            radius = skill.reveal_radius_for(agent.tiles_walked) + colony.tier
+            ax, ay = agent.x, agent.y
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    tx = ax + dx
+                    ty = ay + dy
+                    if 0 <= tx < width and 0 <= ty < height:
+                        colony.explored.add((tx, ty))
 
     def recompute_growing_counts(self):
         """Re-derive `colony.growing_count` from tile state.
@@ -187,6 +355,10 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
                 name = f'{colony.name}-{i + 1}'
                 a = Agent(name, colony.camp_x, colony.camp_y, colony_id=colony.id)
                 sim.agents.append(a)
+            # Seed the colony's name counter past the founders so the
+            # first newborn picks up Red-5 (or whatever) instead of
+            # colliding with Red-1..Red-4.
+            colony.agent_name_counter = agents_per_colony
     else:
         for i in range(agent_count):
             sim.spawn_agent(f'{agent_name_prefix}-{i + 1}')

@@ -97,4 +97,15 @@ export class InterpBuffer {
 
     return { positions, newlyPresent, departed, tick: newer.tick };
   }
+
+  /** Time gap between the two newest snapshots in the buffer, or null
+   *  while the buffer hasn't accumulated two snapshots yet. The renderer
+   *  uses this as an adaptive interp delay so its sample clock walks
+   *  forward between snaps at 1 ms per ms — without it, sampling at a
+   *  fixed offset from the latest server timestamp leaves the agent
+   *  pinned at one interp fraction until the next snap pops them again. */
+  lastSnapInterval(): number | null {
+    if (this.buf.length < 2) return null;
+    return this.buf[1].serverTimeMs - this.buf[0].serverTimeMs;
+  }
 }

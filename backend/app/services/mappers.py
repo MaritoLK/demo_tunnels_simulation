@@ -17,8 +17,13 @@ def agent_to_row(agent):
         health=agent.health,
         age=agent.age,
         alive=agent.alive,
+        rogue=agent.rogue,
+        loner=agent.loner,
         colony_id=agent.colony_id,
-        cargo=agent.cargo,
+        cargo_food=agent.cargo_food,
+        cargo_wood=agent.cargo_wood,
+        cargo_stone=agent.cargo_stone,
+        tiles_walked=agent.tiles_walked,
     )
 
 
@@ -31,7 +36,12 @@ def row_to_agent(row):
     a.health = row.health
     a.age = row.age
     a.alive = row.alive
-    a.cargo = row.cargo
+    a.rogue = row.rogue
+    a.loner = row.loner
+    a.cargo_food = row.cargo_food
+    a.cargo_wood = row.cargo_wood
+    a.cargo_stone = row.cargo_stone
+    a.tiles_walked = row.tiles_walked
     return a
 
 
@@ -39,6 +49,10 @@ def update_agent_row(row, engine_agent):
     """Copy mutable per-tick fields from engine agent onto its ORM row.
     `name` and `id` are immutable post-spawn — omit them.
     `colony_id` is immutable post-spawn — omit it.
+    `loner` is immutable post-spawn (set once at sim build) — but copying
+    it is a one-way no-op rather than a guard, so keeping the assignment
+    here means a future tick path that flips it would survive a step.
+    `rogue` is one-way (False → True in decay_needs) and changes per tick.
     """
     row.x = engine_agent.x
     row.y = engine_agent.y
@@ -49,7 +63,12 @@ def update_agent_row(row, engine_agent):
     row.health = engine_agent.health
     row.age = engine_agent.age
     row.alive = engine_agent.alive
-    row.cargo = engine_agent.cargo
+    row.rogue = engine_agent.rogue
+    row.loner = engine_agent.loner
+    row.cargo_food = engine_agent.cargo_food
+    row.cargo_wood = engine_agent.cargo_wood
+    row.cargo_stone = engine_agent.cargo_stone
+    row.tiles_walked = engine_agent.tiles_walked
 
 
 def tile_to_row(tile):
@@ -139,6 +158,9 @@ def colony_to_row(c):
         camp_y=c.camp_y,
         food_stock=c.food_stock,
         sprite_palette=c.sprite_palette,
+        wood_stock=c.wood_stock,
+        stone_stock=c.stone_stock,
+        tier=c.tier,
     )
 
 
@@ -152,11 +174,19 @@ def row_to_colony(row):
         camp_y=row.camp_y,
         food_stock=row.food_stock,
         sprite_palette=row.sprite_palette,
+        wood_stock=row.wood_stock,
+        stone_stock=row.stone_stock,
+        tier=row.tier,
     )
 
 
 def update_colony_row(row, engine_colony):
     """Copy mutable per-tick fields from engine colony onto its ORM row.
-    Only food_stock changes during simulation; all other fields are immutable post-creation.
+    food_stock / wood_stock / stone_stock fluctuate every tick (gather +
+    deposit + harvest + spend); tier ticks up via upgrade_camp. Other
+    fields are immutable post-creation.
     """
     row.food_stock = engine_colony.food_stock
+    row.wood_stock = engine_colony.wood_stock
+    row.stone_stock = engine_colony.stone_stock
+    row.tier = engine_colony.tier
