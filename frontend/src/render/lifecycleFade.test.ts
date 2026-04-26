@@ -32,6 +32,18 @@ describe('LifecycleFade', () => {
     expect(f.alphaFor(1, FADE_MS + 1000)).toBe(1);
   });
 
+  it('disappearing mid-fadein preserves alpha continuity instead of snapping', () => {
+    const f = new LifecycleFade();
+    f.update({ present: new Set([1]), now: 0 });                 // start fade-in
+    const departAt = FADE_MS / 3;                                 // mid fade-in
+    const alphaBefore = f.alphaFor(1, departAt);
+    expect(alphaBefore).toBeGreaterThan(0);
+    expect(alphaBefore).toBeLessThan(1);
+    f.update({ present: new Set<number>(), now: departAt });
+    expect(f.alphaFor(1, departAt)).toBeCloseTo(alphaBefore, 5);
+    expect(f.alphaFor(1, departAt + FADE_MS)).toBeCloseTo(0, 3);
+  });
+
   it('reappearing mid-fadeout preserves alpha continuity instead of snapping', () => {
     const f = new LifecycleFade();
     f.update({ present: new Set([1]), now: 0 });

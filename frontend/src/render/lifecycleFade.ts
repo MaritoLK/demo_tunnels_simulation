@@ -54,7 +54,17 @@ export class LifecycleFade {
     for (const [id, e] of this.map) {
       if (!present.has(id)) {
         if (e.state !== 'out') {
-          this.map.set(id, { state: 'out', startedAt: now });
+          // Symmetric to the out→in continuity fix above. For 'alive'
+          // alpha is 1, so outProgress is 0 and the back-date is a
+          // no-op (normal fade-out start). For 'in' (disappear mid
+          // fade-in) we'd otherwise jump from the fade-in alpha back
+          // to 1.0 because a fresh 'out' begins at α=1; back-dating by
+          // outProgress = 1 − ∛α makes the new fade-out's first sample
+          // match the previous frame's alpha.
+          const dt = now - e.startedAt;
+          const alpha = e.state === 'in' ? easeOutCubic(dt / FADE_MS) : 1;
+          const outProgress = 1 - Math.cbrt(alpha);
+          this.map.set(id, { state: 'out', startedAt: now - FADE_MS * outProgress });
         } else if (now - e.startedAt > FADE_MS) {
           this.map.delete(id);
         }
