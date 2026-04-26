@@ -25,8 +25,7 @@
 import type { Renderer, FrameSnapshot } from './Renderer';
 import { CARRY_MAX, type Terrain } from '../api/types';
 import {
-  HOUSE_FRAME_H,
-  HOUSE_FRAME_W,
+  HOUSE_TIER_DIMS,
   loadSprites,
   PAWN_FRAME_PX,
   SOURCE_TILE_PX,
@@ -454,14 +453,21 @@ export class Canvas2DRenderer implements Renderer {
         colony.tier ?? 0,
       ));
       const houseSprite = houseTriplet ? houseTriplet[tier] : undefined;
+      // Per-tier sprite dimensions — Monastery is 3w × 5t, Castle is
+      // 5w × 4t, so each footprint differs from House1's 2w × 3t.
+      // The draw uses the actual source-image rect so we don't crop
+      // the upper-left corner of the larger sprites. Anchored bottom-
+      // center on the camp tile so the building's front step lands
+      // on the camp tile regardless of footprint.
+      const dims = HOUSE_TIER_DIMS[tier] ?? HOUSE_TIER_DIMS[0];
       if (sprites && houseSprite) {
-        const houseW = tilePx * 2;
-        const houseH = tilePx * (HOUSE_FRAME_H / HOUSE_FRAME_W) * 2;
+        const houseW = tilePx * dims.tilesW;
+        const houseH = tilePx * dims.tilesH;
         const houseX = px + tilePx / 2 - houseW / 2;
         const houseY = py + tilePx - houseH;
         ctx.drawImage(
           houseSprite,
-          0, 0, HOUSE_FRAME_W, HOUSE_FRAME_H,
+          0, 0, dims.srcW, dims.srcH,
           houseX, houseY, houseW, houseH,
         );
         // Thin colored halo ring under the house so team reading still
@@ -786,7 +792,7 @@ export class Canvas2DRenderer implements Renderer {
         }
       }
 
-      if (a.id === selectedAgentId) {
+      if (selectedAgentId !== null && a.id === selectedAgentId) {
         const ringGap = Math.max(2, tilePx * 0.22);
         ctx.strokeStyle = '#ff7b3b';
 
@@ -955,17 +961,30 @@ function drawTerrainSprite(
     // Forest tiles read as a Tree1 sprite while wood remains, and
     // as a Stump2 sprite once chopped. The user wanted depletion
     // visible on the map — see the lumberjack stripe its way
-    // through a forest by watching trees become stumps. Source
-    // frames are 192×192 with the tree body roughly centred; a
-    // ~10% inset crop pulls in the body so it fills the tile
-    // without the surrounding transparent padding.
+    // through a forest by watching trees become stumps.
+    //
+    // Source layouts: Tree1.png is 1536×256 = 8 frames × 192×256
+    // (frame 0 is the still pose); Stump 2.png is 192×256 single
+    // frame. Both have the body anchored to the LOWER portion of
+    // the frame with transparent space above (foliage rises into
+    // the upper area for trees, sits at ground level for stumps).
+    // Drawing the whole frame into a tile-size box keeps the trunk
+    // grounded; we extend slightly above the tile (1.4× tile height,
+    // anchored bottom-center) so the canopy reads at a glance
+    // without colliding with the row above.
     const sprite = (resourceType === 'wood' && resourceAmount > 0)
       ? sprites.tree
       : sprites.stump;
+    const frameW = 192;
+    const frameH = 256;
+    const drawH = tilePx * 1.4;
+    const drawW = drawH * (frameW / frameH);
+    const drawX = px + tilePx / 2 - drawW / 2;
+    const drawY = py + tilePx - drawH;
     ctx.drawImage(
       sprite,
-      19, 19, 154, 154,
-      px, py, tilePx, tilePx,
+      0, 0, frameW, frameH,
+      drawX, drawY, drawW, drawH,
     );
   } else if (decoration === 'rock') {
     ctx.drawImage(

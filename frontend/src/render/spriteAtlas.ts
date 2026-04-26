@@ -148,12 +148,28 @@ export const TERRAIN_DECORATION: Record<Terrain, 'bush' | 'rock' | null> = {
   water:  null,
 };
 
-// House frame is the full source image (128×192). The house body
-// occupies the lower ~70% of the frame; drawing it so the base of
-// the house anchors to the bottom of a ~3-tile-tall box sits the
-// building plausibly "on" the camp tile instead of floating over it.
-export const HOUSE_FRAME_W = 128;
-export const HOUSE_FRAME_H = 192;
+// House frame dimensions per tier. The Tiny Swords building sprites
+// are NOT all the same size — House1 is 128×192 (2 tiles wide × 3
+// tall), Monastery is 192×320 (3w × 5t), Castle is 320×256 (5w × 4t).
+// Pre-fix the renderer hardcoded a single 128×192 sample rect for
+// every tier so Monastery / Castle came back as a chopped corner of
+// the upper-left, floating off the camp tile and visibly smaller
+// than House1. Each entry below pairs the source-image dimensions
+// (for the drawImage source rect) with the in-world footprint in
+// tiles (for the destination rect). The renderer anchors each sprite
+// bottom-center on the camp tile so the building's "front step" lines
+// up regardless of which tier is showing.
+export interface HouseTierDims {
+  srcW: number;
+  srcH: number;
+  tilesW: number;
+  tilesH: number;
+}
+export const HOUSE_TIER_DIMS: readonly HouseTierDims[] = [
+  { srcW: 128, srcH: 192, tilesW: 2, tilesH: 3 },  // House1
+  { srcW: 192, srcH: 320, tilesW: 3, tilesH: 5 },  // Monastery
+  { srcW: 320, srcH: 256, tilesW: 5, tilesH: 4 },  // Castle
+];
 
 export async function loadSprites(): Promise<SpriteAtlas> {
   // Promise.all so all image loads run in parallel — first paint
