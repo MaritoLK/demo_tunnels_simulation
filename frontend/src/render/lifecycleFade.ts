@@ -38,8 +38,16 @@ export class LifecycleFade {
       } else if (e.state === 'in' && now - e.startedAt >= FADE_MS) {
         this.map.set(id, { state: 'alive', startedAt: now });
       } else if (e.state === 'out') {
-        // Reappeared before fade-out completed — snap back to alive.
-        this.map.set(id, { state: 'alive', startedAt: now });
+        // Reappeared mid-fade-out. Continue from the current alpha by
+        // switching to 'in' with a back-dated startedAt, so the next
+        // frame's eased value matches the previous frame's. Inverting
+        // easeOutCubic(t) = 1 − (1−t)³ at the current α gives the
+        // fade-in offset: t = 1 − ∛(1 − α). Without this the alpha
+        // would jump from the fade-out value straight to 1 — the
+        // snap-glitch this module exists to prevent.
+        const alpha = 1 - easeOutCubic((now - e.startedAt) / FADE_MS);
+        const inProgress = 1 - Math.cbrt(1 - alpha);
+        this.map.set(id, { state: 'in', startedAt: now - FADE_MS * inProgress });
       }
     }
     // Transition out / prune completed
