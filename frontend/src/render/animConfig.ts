@@ -30,7 +30,7 @@ export const STATE_VISUALS: Record<string, StateVisual> = {
   resting:     { glyph: '💤', label: 'rest',    color: '#6b9bd4' }, // sky blue — calm
   foraging:    { glyph: '🌾', label: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
   socialising: { glyph: '💬', label: 'social',  color: '#d870c9' }, // magenta — warmth
-  exploring:   { glyph: '·',  label: 'explore', color: '#5cbd4a' }, // green — go
+  exploring:   { glyph: '?',  label: 'explore', color: '#5cbd4a' }, // green — go
   traversing:  { glyph: '…',  label: 'trek',    color: '#c08a4a' }, // tan — terrain drag
   planting:    { glyph: '🌱', label: 'plant',   color: '#7ee070' }, // bright green — matches growing dot
   harvesting:  { glyph: '🌾', label: 'harvest', color: '#ffd23f' }, // gold — matches mature dot
