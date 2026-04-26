@@ -186,7 +186,7 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
     if action_name == 'socialise':
         return actions.socialise(agent, all_agents, colony=colony)
     if action_name == 'explore':
-        return actions.explore(agent, world, rng=rng)
+        return actions.explore(agent, world, colony, rng=rng)
     if action_name == 'plant':
         return actions.plant(agent, world, colony)
     if action_name == 'harvest':

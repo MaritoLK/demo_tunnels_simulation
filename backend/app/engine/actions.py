@@ -370,7 +370,7 @@ def socialise(agent, agents, *, colony):
     }
 
 
-def explore(agent, world, *, rng):
+def explore(agent, world, colony=None, *, rng):
     # Prune depleted memory: a remembered tile that's been forage-emptied
     # is just a phantom anchor — agents would patrol toward it forever.
     # Done here (the consumer) rather than per-tick so we only pay the
@@ -381,12 +381,20 @@ def explore(agent, world, *, rng):
             if world.in_bounds(p[0], p[1])
             and world.get_tile(p[0], p[1]).resource_amount > 0
         ]
-    # Memory-biased explore: patrol toward the nearest still-productive
-    # remembered forage tile. Without this, the all-needs-ok branch is
-    # a random walk and the agent looks like they have no purpose.
-    if agent.food_memory:
+    # Memory-biased patrol: head toward the nearest remembered tile
+    # that ISN'T our current position. Filtering self-targets is what
+    # stops the oscillation — pre-fix, an agent standing on its only
+    # memory tile would step_toward(self), get a False, fall through
+    # to random walk, get nudged onto a neighbour, then the same
+    # memory entry would pull them back next tick. Two-step loop
+    # burning energy.
+    targets = [
+        p for p in agent.food_memory
+        if (p[0], p[1]) != (agent.x, agent.y)
+    ]
+    if targets:
         target = min(
-            agent.food_memory,
+            targets,
             key=lambda p: abs(p[0] - agent.x) + abs(p[1] - agent.y),
         )
         if step_toward(agent, target[0], target[1], world):
@@ -398,9 +406,53 @@ def explore(agent, world, *, rng):
                     f'at ({target[0]},{target[1]})'
                 ),
             }
-    # Random-walk fallback — original explore behaviour. Used when the
-    # agent has no memory yet (early game) or the BFS step finds no
-    # path (memory tile on an unreachable island, target == own tile).
+    # Frontier scout: prefer a walkable neighbour OUTSIDE the colony's
+    # explored set so explore actually advances the fog. Only runs when
+    # a colony reference was passed (callers from execute_action have
+    # one; forage's no-food fallback does not — it falls through to
+    # the random-walk branch). Without this branch, agents standing on
+    # depleted memory tiles would idle forever instead of clearing more
+    # ground for the colony.
+    if colony is not None:
+        unexplored = []
+        for dx, dy in DIRECTIONS:
+            nx, ny = agent.x + dx, agent.y + dy
+            if not world.in_bounds(nx, ny):
+                continue
+            tile = world.get_tile(nx, ny)
+            if not tile.is_walkable:
+                continue
+            if (nx, ny) in colony.explored:
+                continue
+            unexplored.append((nx, ny))
+        if unexplored:
+            agent.x, agent.y = rng.choice(unexplored)
+            dest_terrain = world.get_tile(agent.x, agent.y).terrain
+            agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
+            agent.state = STATE_EXPLORING
+            return {
+                'type': 'moved',
+                'description': (
+                    f'{agent.name} scouted into the fog '
+                    f'at ({agent.x},{agent.y})'
+                ),
+            }
+        # Memory present (we returned early above only on a successful
+        # step) AND no unexplored neighbour — every reachable tile is
+        # already mapped. Idle in place. Conserves energy and lets need
+        # decay drive the next non-trivial decision instead of burning
+        # turns random-walking through known territory.
+        if agent.food_memory:
+            agent.state = STATE_IDLE
+            return {
+                'type': 'idled',
+                'description': f'{agent.name} rested at known food',
+            }
+    # Random-walk fallback. Reached when:
+    #   - no memory AND no colony reference (forage's recursive call), OR
+    #   - no memory AND no unexplored neighbour AND a colony reference.
+    # Either way we're out of motivated options; pick a neighbour
+    # randomly so the agent at least keeps the world feeling alive.
     options = []
     for dx, dy in DIRECTIONS:
         nx, ny = agent.x + dx, agent.y + dy
