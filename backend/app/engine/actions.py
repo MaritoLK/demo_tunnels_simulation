@@ -484,6 +484,53 @@ def die(agent, cause='starvation'):
     }
 
 
+def step_toward_mature_crop(agent, world):
+    """BFS to nearest reachable mature crop tile, take one step.
+
+    Mirrors the BFS-toward-food pattern in `forage`. Mature crops are
+    not 'food' under adjacent_food_tile (resource_type stays None on a
+    crop), so without an explicit walk-toward step agents only ever
+    harvest tiles they happen to walk over by chance — fine when crops
+    were scattered, but the new PLANT_RADIUS_FROM_CAMP clusters them
+    in tight patches near each camp where a forage / explore route
+    rarely passes.
+    """
+    step, target = _bfs_first_reachable(
+        agent, world,
+        lambda t: t.crop_state == 'mature',
+    )
+    if step is None:
+        return {
+            'type': 'idled',
+            'description': f'{agent.name} found no mature crop in reach',
+        }
+    ddx, ddy = step
+    nx, ny = agent.x + ddx, agent.y + ddy
+    dest_tile = world.get_tile(nx, ny)
+    agent.x = nx
+    agent.y = ny
+    agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
+    agent.state = STATE_HARVESTING
+    return {
+        'type': 'moved',
+        'description': (
+            f'{agent.name} moved toward mature crop at '
+            f'({target.x},{target.y})'
+        ),
+    }
+
+
+def has_reachable_mature_crop(agent, world):
+    """Cheap bool wrapper used by the decide_action ladder. Re-runs the
+    same BFS as step_toward_mature_crop — costs O(PATH_SEARCH_HORIZON²)
+    visits per probe per agent, acceptable at our scale (≤16 agents)."""
+    step, _ = _bfs_first_reachable(
+        agent, world,
+        lambda t: t.crop_state == 'mature',
+    )
+    return step is not None
+
+
 def is_plantable(tile, colony):
     """Return True if `tile` is a valid plant target for `colony`.
 

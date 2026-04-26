@@ -98,6 +98,7 @@ def decide_action(agent, world, colony, phase) -> Decision:
       4. Social-low off-camp → step_to_camp.
       5. Cargo-full off-camp → step_to_camp.
       6. Harvest own tile.
+      6b. Step toward known mature crop.
       7. Opportunistic forage (food adjacent + pouch room).
       8. Plant own tile.
       9. Rogue eat-from-pouch.
@@ -164,6 +165,16 @@ def decide_action(agent, world, colony, phase) -> Decision:
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state == 'mature':
         return Decision('harvest', 'mature crop → harvest')
+
+    # 6b. Walk toward a known mature crop. Without this rung crops
+    # planted under PLANT_RADIUS_FROM_CAMP cluster in a small patch
+    # that agents on forage / explore routes rarely cross — the
+    # integration arc test went 0/4 colonies harvesting until this
+    # was added. Sits below cargo-full (don't ditch a full pouch
+    # to chase a crop) and above opportunistic forage (mature crop
+    # outranks wild food on yield + colony investment).
+    if actions.has_reachable_mature_crop(agent, world):
+        return Decision('step_to_harvest', 'mature crop reachable → walk over')
 
     # 7. Opportunistic forage: food in reach + pouch room → grab it on
     # sight, even when hunger is fine. Food generation is sparse (the
@@ -236,6 +247,8 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
             'type': 'moved' if moved else 'idled',
             'description': f'{agent.name} headed toward camp',
         }
+    if action_name == 'step_to_harvest':
+        return actions.step_toward_mature_crop(agent, world)
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
