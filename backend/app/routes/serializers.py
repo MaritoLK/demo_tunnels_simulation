@@ -49,7 +49,6 @@ def tile_to_dict(tile):
         'crop_state': tile.crop_state,
         'crop_growth_ticks': tile.crop_growth_ticks,
         'crop_colony_id': tile.crop_colony_id,
-        'wolves': tile.wolves,
     }
 
 

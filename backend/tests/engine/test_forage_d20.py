@@ -6,8 +6,7 @@ from app.engine import actions, needs
 
 class _FixedRng:
     """random.Random shim that emits a fixed value for randint() so each
-    test pins exactly which d20 band the forage falls into. Mirrors the
-    stand-in used by the wolves tests — same justification."""
+    test pins exactly which d20 band the forage falls into."""
     def __init__(self, value):
         self._value = value
 

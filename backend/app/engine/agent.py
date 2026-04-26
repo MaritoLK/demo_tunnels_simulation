@@ -97,9 +97,11 @@ def decide_action(agent, world, colony, phase) -> Decision:
       3. At-camp opportunistic (deposit / eat / socialise).
       4. Social-low off-camp → step_to_camp.
       5. Cargo-full off-camp → step_to_camp.
-      6. Tile-local (harvest / plant).
-      7. Rogue eat-from-pouch.
-      8. Tail (forage / explore).
+      6. Harvest own tile.
+      7. Opportunistic forage (food adjacent + pouch room).
+      8. Plant own tile.
+      9. Rogue eat-from-pouch.
+     10. Tail (forage / explore).
 
     Design notes — why this shape:
       * Agents live in the world, not at camp. The only forced returns
@@ -157,26 +159,51 @@ def decide_action(agent, world, colony, phase) -> Decision:
     if not agent.rogue and agent.cargo >= needs.CARRY_MAX:
         return Decision('step_to_camp', 'cargo full → head to camp')
 
-    # 6. Tile-local
+    # 6. Tile-local: harvest first (mature crops outrank wild food —
+    # higher yield, locks in a colony investment).
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state == 'mature':
         return Decision('harvest', 'mature crop → harvest')
+
+    # 7. Opportunistic forage: food in reach + pouch room → grab it on
+    # sight, even when hunger is fine. Food generation is sparse (the
+    # demo halved spawn rate to make caches feel valuable); walking
+    # past a wild-food tile because the agent isn't hungry leaves
+    # precious supply for the world to clean up while the colony
+    # starves later. Sits ABOVE plant so we never sacrifice immediate
+    # food for a multi-tick crop investment, and ABOVE the rogue
+    # eat-from-pouch / tail rungs so it overrides "all needs ok →
+    # explore".
+    if agent.cargo < needs.CARRY_MAX and actions.adjacent_food_tile(agent, world) is not None:
+        return Decision('forage', 'food in reach → forage on sight')
+
+    # 8. Plant: empty tile + free field slot → start a crop.
     if (tile.crop_state == 'none'
             and tile.resource_amount == 0
             and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
         return Decision('plant', 'empty tile → plant')
 
-    # 7. Rogue eat-from-pouch
+    # 9. Rogue eat-from-pouch
     if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
         return Decision('eat_cargo', f'rogue, hunger < {hu_m} → eat from pouch')
 
-    # 8. Tail
+    # 10. Tail
     if agent.hunger < needs.HUNGER_MODERATE:
         return Decision('forage', f'hunger < {hu_m} → forage')
     return Decision('explore', 'all needs ok → explore')
 
 
 def execute_action(action_name, agent, world, all_agents, colony, *, rng):
+    # Default state for the tick is IDLE. Each action overrides on a
+    # productive success — rest sets RESTING, forage sets FORAGING, etc.
+    # Keeping the reset here (rather than scattering `agent.state =
+    # STATE_IDLE` across every action's honest-action guard) makes
+    # the contract one-line obvious: "if the action did real work it
+    # writes its own state, otherwise the visual reads idle". Pre-fix
+    # the rendered visual lagged the truth — `rest()` returning idled
+    # on full energy left state='resting', and `step_to_camp` never
+    # wrote state at all, so a 💤 glyph followed the agent home.
+    agent.state = actions.STATE_IDLE
     if action_name == 'forage':
         return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
@@ -199,6 +226,11 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
         return actions.deposit_cargo(agent, colony)
     if action_name == 'step_to_camp':
         moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world)
+        if moved:
+            # Mid-trek visual: agent is moving with purpose. Renderer
+            # maps STATE_EXPLORING to a green '?' glyph — close enough
+            # to "going somewhere" without inventing a dedicated state.
+            agent.state = actions.STATE_EXPLORING
         return {
             'type': 'moved' if moved else 'idled',
             'description': f'{agent.name} headed toward camp',
@@ -272,31 +304,6 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     # they didn't actually take.
     if (agent.x, agent.y) != (pre_x, pre_y):
         agent.tiles_walked += 1
-
-    # Wolf hazard: bite only on entry, not while standing still. Without
-    # the entry check, an agent who can't reach safe ground would die in
-    # a few ticks from continuous bites — one bad step turns into a
-    # death spiral. Entering a wolves tile is the deliberate risk; the
-    # bite is the cost of that one decision, not chronic damage.
-    moved = (agent.x, agent.y) != (pre_x, pre_y)
-    if moved:
-        dest = world.get_tile(agent.x, agent.y)
-        if dest.wolves and agent.alive:
-            damage = rng.randint(needs.WOLF_BITE_MIN, needs.WOLF_BITE_MAX)
-            agent.health = max(0.0, agent.health - damage)
-            events.append({
-                'type': 'wolf_attack',
-                'description': f'{agent.name} was bitten by wolves at ({agent.x},{agent.y}) → -{damage} hp',
-                'data': {
-                    'tile_x': agent.x,
-                    'tile_y': agent.y,
-                    'damage': damage,
-                },
-            })
-            if agent.health <= 0:
-                events.append(actions.die(agent))
-                agent.age += 1
-                return events
 
     agent.age += 1
     return events

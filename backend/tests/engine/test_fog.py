@@ -1,10 +1,9 @@
-"""Per-colony fog of war reveal + nightly reset.
+"""Per-colony fog of war reveal.
 
 Reveal is a 3×3 Chebyshev block around each non-rogue alive agent,
-appended onto `colony.explored` after every step. Reset fires at the
-dusk → night phase boundary so each new day starts dark again — the
-mechanism that gives exploration a stake instead of being a one-time
-tax.
+appended onto `colony.explored` after every step. The set persists
+across phase boundaries — once a colony has scouted a tile it stays
+on the map for the lifetime of the run.
 """
 from app.engine import config, cycle
 from app.engine.colony import EngineColony
@@ -75,36 +74,22 @@ def test_rogue_agents_do_not_contribute_to_fog():
     )
 
 
-def test_dusk_to_night_clears_explored():
-    # Set current_tick = first night tick. step() reads phase_for(now) =
-    # 'night' and phase_for(now - 1) = 'dusk' → reset fires before the
-    # tick's reveal repaints around (4,4). Assertion: only the new
-    # reveal survives, none of the pre-seeded leftovers do.
+def test_explored_persists_across_phase_boundaries():
+    # Pin that the explored set sticks across every phase transition —
+    # the prior dusk → night reset was removed because the demo prefers
+    # cumulative discovery to a one-day-cycle reset. Walk the sim across
+    # all four boundaries with pre-seeded fog and assert nothing wipes.
     sim, colony, _agent = _sim_with_one_agent(agent_x=4, agent_y=4)
-    sim.current_tick = cycle.PHASES.index('night') * cycle.TICKS_PER_PHASE
-    assert cycle.phase_for(sim.current_tick) == 'night'
-    assert cycle.phase_for(sim.current_tick - 1) == 'dusk'
-    colony.explored.update({(0, 0), (9, 9), (5, 5)})
-    sim.step()
-    assert (0, 0) not in colony.explored
-    assert (9, 9) not in colony.explored
-    expected = {(x, y) for x in range(3, 6) for y in range(3, 6)}
-    assert colony.explored == expected
-
-
-def test_other_phase_transitions_do_not_clear_explored():
-    # Day → dusk crossing: stale fog must NOT wipe, only dusk → night
-    # does. Set current_tick = first dusk tick so step() sees the
-    # day → dusk boundary.
-    sim, colony, _agent = _sim_with_one_agent(agent_x=4, agent_y=4)
-    sim.current_tick = cycle.PHASES.index('dusk') * cycle.TICKS_PER_PHASE
-    assert cycle.phase_for(sim.current_tick) == 'dusk'
-    assert cycle.phase_for(sim.current_tick - 1) == 'day'
-    colony.explored.add((9, 9))
-    sim.step()
-    assert (9, 9) in colony.explored, (
-        'day → dusk must not wipe fog; only dusk → night does'
-    )
+    pre_seeded = {(0, 0), (9, 9), (5, 5)}
+    for boundary_phase in ('dawn', 'day', 'dusk', 'night'):
+        idx = cycle.PHASES.index(boundary_phase)
+        sim.current_tick = idx * cycle.TICKS_PER_PHASE
+        colony.explored.update(pre_seeded)
+        sim.step()
+        assert pre_seeded.issubset(colony.explored), (
+            f'pre-seeded fog wiped on entry into {boundary_phase}: '
+            f'missing {pre_seeded - colony.explored}'
+        )
 
 
 def test_reveal_radius_constant_drives_size():

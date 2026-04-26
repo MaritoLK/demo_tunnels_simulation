@@ -17,15 +17,6 @@ LONER_SOCIAL_DECAY_MULT = 4.0
 
 STARVATION_HEALTH_DAMAGE = 2.0
 
-# Wolves: random damage rolled (inclusive) when an agent steps onto a
-# guarded tile. Tuned so 1-2 hits is survivable for a healthy agent
-# (NEED_MAX = 100), 3-4 makes it a gamble, 5+ is generally fatal. With
-# ~40% of yield≥4 food tiles guarded (see world.WOLF_FOOD_*), a forager
-# who pushes deep into the map for the bigger food caches takes a real
-# bite-or-don't-bite risk per encounter — that's the risk/reward shape.
-WOLF_BITE_MIN = 8
-WOLF_BITE_MAX = 18
-
 # Passive health regen: a well-fed agent slowly recovers. Without this,
 # any agent that ever starves stays damaged forever — the "zombie" state
 # where health is below max but never moves. Symmetric with the starvation

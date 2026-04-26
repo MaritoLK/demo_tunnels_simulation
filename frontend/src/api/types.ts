@@ -27,11 +27,6 @@ export interface Tile {
   crop_state: CropState;
   crop_growth_ticks: number;
   crop_colony_id: number | null;
-  // Static hazard. When TRUE the tile bites any agent that steps onto
-  // it for WOLF_BITE damage. Persisted at world-generation, never
-  // mutates during a run. Renderer hides the marker behind fog so the
-  // player only sees wolves they've discovered.
-  wolves?: boolean;
 }
 
 export interface WorldSnapshot {
@@ -83,12 +78,12 @@ export interface Colony {
   // so a future colony rename doesn't lose its visual identity.
   // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).
   sprite_palette: string;
-  // Tiles this colony has revealed since the last fog reset (cleared at
-  // dusk → night). Sorted on the wire so identical fog produces
-  // identical bytes — keeps the nginx micro-cache and SSE diff happy.
-  // Optional because older clients may receive a payload without it
-  // during a rolling deploy; the renderer falls back to "all explored"
-  // when missing rather than blacking out the world.
+  // Tiles this colony has revealed. Cumulative — never reset during a
+  // run. Sorted on the wire so identical fog produces identical bytes —
+  // keeps the nginx micro-cache and SSE diff happy. Optional because
+  // older clients may receive a payload without it during a rolling
+  // deploy; the renderer falls back to "all explored" when missing
+  // rather than blacking out the world.
   explored?: Array<[number, number]>;
 }
 

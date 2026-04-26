@@ -26,6 +26,7 @@ from app import db
 
 from . import broadcaster, simulation_service
 from .exceptions import SimulationNotFoundError
+from app.engine import cycle
 from app.routes import serializers
 
 
@@ -45,6 +46,14 @@ MIN_INTERVAL = 0.01
 # polling control (it will resume immediately when the user unpauses)
 # so a transient DB blip doesn't poison the worker.
 MAX_CONSECUTIVE_FAILURES = 5
+
+# Wall-clock multiplier applied to the inter-tick interval during the
+# `night` phase. The user's `speed` control stays the source of truth —
+# this just shrinks the gap between ticks while agents sleep so the demo
+# doesn't dwell on a quiet phase. Engine state is unchanged: same tick
+# count per night, same RNG draws, same hunger/energy decay. Pure UX
+# knob; bump the constant if night still drags.
+NIGHT_SPEEDUP_MULT = 4.0
 
 _thread: threading.Thread | None = None
 _stop_event = threading.Event()
@@ -98,8 +107,15 @@ def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
             _consecutive_failures = 0
         return PAUSED_POLL_INTERVAL
     _consecutive_failures = 0
+    # Capture the night-speedup signal as soon as the sim is in hand, so
+    # a downstream broadcast or serializer failure doesn't undo the
+    # phase-aware pacing. If the sim fetch itself fails (transient cache
+    # miss, fresh deploy), we conservatively fall back to no speedup —
+    # better to dwell briefly than to mis-pace based on a guess.
+    night_speedup = False
     try:
         sim = simulation_service.get_current_simulation()
+        night_speedup = cycle.phase_for(sim.current_tick) == 'night'
         # Reuse the control dict from line 75 — a second read would hit the
         # DB again AND open a consistency gap (a PATCH landing between the
         # stepper commit and the broadcast would emit a snapshot whose
@@ -118,7 +134,10 @@ def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
     except Exception:
         logger.exception('tick_loop: broadcast failed — skipping this tick')
     speed = max(control['speed'], simulation_service.MIN_SPEED)
-    return max(MIN_INTERVAL, 1.0 / speed)
+    interval = 1.0 / speed
+    if night_speedup:
+        interval /= NIGHT_SPEEDUP_MULT
+    return max(MIN_INTERVAL, interval)
 
 
 def _auto_pause():

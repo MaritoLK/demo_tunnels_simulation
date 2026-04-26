@@ -406,53 +406,49 @@ def explore(agent, world, colony=None, *, rng):
                     f'at ({target[0]},{target[1]})'
                 ),
             }
-    # Frontier scout: prefer a walkable neighbour OUTSIDE the colony's
-    # explored set so explore actually advances the fog. Only runs when
-    # a colony reference was passed (callers from execute_action have
-    # one; forage's no-food fallback does not — it falls through to
-    # the random-walk branch). Without this branch, agents standing on
-    # depleted memory tiles would idle forever instead of clearing more
-    # ground for the colony.
+    # Frontier scout: BFS for the nearest reachable tile outside the
+    # colony's explored set; step one cardinal toward it. Earlier
+    # versions only checked immediate neighbours, which idled the agent
+    # the moment the 3x3 reveal bubble caught up — the user-reported
+    # "agents grab food and remain idle" / "agents repeat exploration of
+    # where they had been already" pair. BFS pushes the frontier outward
+    # through known territory until something genuinely new is found,
+    # and idles only when no fog remains within PATH_SEARCH_HORIZON.
+    # Only fires when a colony reference is available (forage's no-food
+    # fallback path doesn't pass one — it falls through to random walk).
     if colony is not None:
-        unexplored = []
-        for dx, dy in DIRECTIONS:
-            nx, ny = agent.x + dx, agent.y + dy
-            if not world.in_bounds(nx, ny):
-                continue
-            tile = world.get_tile(nx, ny)
-            if not tile.is_walkable:
-                continue
-            if (nx, ny) in colony.explored:
-                continue
-            unexplored.append((nx, ny))
-        if unexplored:
-            agent.x, agent.y = rng.choice(unexplored)
-            dest_terrain = world.get_tile(agent.x, agent.y).terrain
-            agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_terrain, 1) - 1
+        step, target = _bfs_first_reachable(
+            agent, world,
+            lambda t: (t.x, t.y) not in colony.explored,
+        )
+        if step is not None:
+            ddx, ddy = step
+            nx, ny = agent.x + ddx, agent.y + ddy
+            dest_tile = world.get_tile(nx, ny)
+            agent.x = nx
+            agent.y = ny
+            agent.move_cooldown = TERRAIN_MOVE_COST.get(dest_tile.terrain, 1) - 1
             agent.state = STATE_EXPLORING
             return {
                 'type': 'moved',
                 'description': (
-                    f'{agent.name} scouted into the fog '
-                    f'at ({agent.x},{agent.y})'
+                    f'{agent.name} scouted toward fog '
+                    f'at ({target.x},{target.y})'
                 ),
             }
-        # Memory present (we returned early above only on a successful
-        # step) AND no unexplored neighbour — every reachable tile is
-        # already mapped. Idle in place. Conserves energy and lets need
-        # decay drive the next non-trivial decision instead of burning
-        # turns random-walking through known territory.
-        if agent.food_memory:
-            agent.state = STATE_IDLE
-            return {
-                'type': 'idled',
-                'description': f'{agent.name} rested at known food',
-            }
-    # Random-walk fallback. Reached when:
-    #   - no memory AND no colony reference (forage's recursive call), OR
-    #   - no memory AND no unexplored neighbour AND a colony reference.
-    # Either way we're out of motivated options; pick a neighbour
-    # randomly so the agent at least keeps the world feeling alive.
+        # No reachable fog anywhere in range — every walkable tile within
+        # PATH_SEARCH_HORIZON is mapped. Idle in place. Conserves energy
+        # and lets need decay drive the next non-trivial decision instead
+        # of burning turns random-walking through known territory.
+        agent.state = STATE_IDLE
+        return {
+            'type': 'idled',
+            'description': f'{agent.name} found nothing left to map',
+        }
+    # Random-walk fallback. Reached only when no colony reference was
+    # passed (forage's recursive no-food fallback). Without a colony we
+    # can't compute a frontier, so we keep the legacy behaviour — pick
+    # a walkable neighbour at random and move.
     options = []
     for dx, dy in DIRECTIONS:
         nx, ny = agent.x + dx, agent.y + dy

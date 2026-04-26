@@ -64,6 +64,48 @@ class Simulation:
                                    growing_count=0,
                                    sprite_palette='Blue')
             self.colonies = {None: default}
+        self._ensure_walkable_camp_tiles()
+
+    def _ensure_walkable_camp_tiles(self):
+        """Carve a walkable 3×3 grass bubble around each colony's camp.
+
+        World generation picks terrain by biome distance and the
+        default-corner camp positions (see services._default_camp_positions)
+        can roll any terrain — including water. Two failure modes traced
+        in the 2026-04-26 1500-tick diagnostic:
+
+          1. Camp tile itself is water — agents spawn on a non-walkable
+             tile, can't act. Hunger drains; they starve at ~tick 270.
+          2. Camp tile is a 1-tile grass island in a water lake — agents
+             can plant but every cardinal neighbour is water, so the
+             BFS frontier scout returns no targets. Same outcome.
+
+        Clearing the 3×3 around the camp guarantees the agents have at
+        least 8 walkable neighbours to push off into, breaking the
+        island. Resources on the cleared tiles are stripped — camps
+        are colony infrastructure, not landscape, and a phantom food
+        cache on a "water that became grass" tile would forage as if
+        it were a real cluster. One-shot at __init__: camps don't move.
+        """
+        for colony in self.colonies.values():
+            cx, cy = colony.camp_x, colony.camp_y
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    tx, ty = cx + dx, cy + dy
+                    if not self.world.in_bounds(tx, ty):
+                        continue
+                    tile = self.world.get_tile(tx, ty)
+                    if tile.is_walkable and tile.resource_type is None:
+                        # Already a clean walkable tile — leave it
+                        # alone so the camp neighbourhood inherits the
+                        # surrounding biome flavor when nothing's broken.
+                        continue
+                    tile.terrain = 'grass'
+                    tile.resource_type = None
+                    tile.resource_amount = 0.0
+                    tile.crop_state = 'none'
+                    tile.crop_growth_ticks = 0
+                    tile.crop_colony_id = None
 
     def snapshot_rng_state(self):
         """JSON-safe snapshot of both sub-stream RNGs for persistence."""
@@ -108,17 +150,6 @@ class Simulation:
     def step(self):
         events = []
         phase = cycle.phase_for(self.current_tick)
-
-        # Fog reset: at the dusk → night phase boundary, every colony's
-        # explored set drops back to empty. Without this fog accumulates
-        # forever and exploration is a one-time tax. Pinning the reset to
-        # nightfall gives each day a stake — the colony has to find its
-        # food before sunset or wake up tomorrow with the map dark again.
-        if self.current_tick > 0:
-            prev_phase = cycle.phase_for(self.current_tick - 1)
-            if prev_phase != 'night' and phase == 'night':
-                for colony in self.colonies.values():
-                    colony.explored.clear()
 
         self.recompute_growing_counts()
         snapshot = list(self.agents)

@@ -357,7 +357,7 @@ export class Canvas2DRenderer implements Renderer {
     }
 
     // Fog of war veil + per-colony tint. Each colony tracks its own
-    // `explored` set (engine-side, reset at dusk → night). For each
+    // `explored` set (engine-side, cumulative across the run). For each
     // colony in turn, paint a faint tint of their color over their
     // explored tiles — overlapping tints mix additively so contested
     // territory reads visibly different from a single-colony zone. The
@@ -410,28 +410,6 @@ export class Canvas2DRenderer implements Renderer {
         ctx.beginPath();
         ctx.arc(fp.x * tilePx + tilePx / 2, fp.y * tilePx + tilePx / 2, fpR, 0, Math.PI * 2);
         ctx.fill();
-      }
-    }
-
-    // Wolves marker — draw a 🐺 glyph on revealed wolves tiles so the
-    // player can SEE the hazard once discovered. Hidden behind fog by
-    // construction (we only iterate explored cells in this pass), so
-    // wolves only become visible after a colony has scouted that tile.
-    // Drawn after fog and before crops/camps/agents so the marker sits
-    // in the world layer, not on top of the colony's units.
-    if (exploredCells.size > 0) {
-      ctx.font = `${Math.max(12, Math.floor(tilePx * 0.65))}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      for (let y = 0; y < height; y++) {
-        const rowTiles = tiles[y];
-        if (!rowTiles) continue;
-        for (let x = 0; x < width; x++) {
-          if (!exploredCells.has(y * width + x)) continue;
-          const t = rowTiles[x];
-          if (!t || !t.wolves) continue;
-          ctx.fillText('🐺', x * tilePx + tilePx / 2, y * tilePx + tilePx / 2);
-        }
       }
     }
 

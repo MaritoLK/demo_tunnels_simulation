@@ -49,25 +49,15 @@ INITIAL_RESOURCE_AMOUNT = {
 FOOD_TILE_YIELD_MIN = 1
 FOOD_TILE_YIELD_MAX = 5
 
-# Wolves cluster on the higher-yield food tiles so the demo has the
-# risk/reward shape user asked for: low-yield tiles are safe pickings,
-# high-yield ones bait you into a hazard. Threshold + density tuned so
-# ~40% of yield≥4 food tiles are guarded. Lower-yield food stays
-# wolves-free — the colony always has SOME safe forage option.
-WOLF_FOOD_THRESHOLD = 4
-WOLF_FOOD_CHANCE = 0.4
-
 
 class Tile:
     __slots__ = (
         'x', 'y', 'terrain', 'resource_type', 'resource_amount',
         'crop_state', 'crop_growth_ticks', 'crop_colony_id',
-        'wolves',
     )
 
     def __init__(self, x, y, terrain, resource_type=None, resource_amount=0.0,
-                 crop_state='none', crop_growth_ticks=0, crop_colony_id=None,
-                 wolves=False):
+                 crop_state='none', crop_growth_ticks=0, crop_colony_id=None):
         self.x = x
         self.y = y
         self.terrain = terrain
@@ -76,7 +66,6 @@ class Tile:
         self.crop_state = crop_state
         self.crop_growth_ticks = crop_growth_ticks
         self.crop_colony_id = crop_colony_id
-        self.wolves = wolves
 
     @property
     def is_walkable(self):
@@ -138,18 +127,6 @@ class World:
             fallback.terrain = 'grass'
             fallback.resource_type = None
             fallback.resource_amount = 0.0
-
-        # Wolf seed pass: high-yield food tiles get a roll for guards.
-        # Done after the main generation pass so the threshold + density
-        # tuning lives in one place (config above) rather than scattered
-        # through _roll_resource. Determinism preserved — uses the same
-        # rng instance, so identical seeds yield identical hazard maps.
-        for row in self.tiles:
-            for tile in row:
-                if (tile.resource_type == 'food'
-                        and tile.resource_amount >= WOLF_FOOD_THRESHOLD
-                        and rng.random() < WOLF_FOOD_CHANCE):
-                    tile.wolves = True
 
     @staticmethod
     def _roll_resource(terrain, rng):
