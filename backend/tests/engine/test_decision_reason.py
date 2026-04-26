@@ -138,9 +138,14 @@ def test_mature_tile_picks_harvest():
 
 
 def test_empty_tile_with_field_room_picks_plant():
-    a = _healthy_agent()
-    # off-camp colony uses growing_count=MAX. Override for this test:
-    c = EngineColony(id=1, name='Test', color='#000', camp_x=99, camp_y=99,
+    a = _healthy_agent()  # at (2,2)
+    # Camp at (5,5) so the agent at (2,2) is off-camp BUT within the
+    # PLANT_RADIUS_FROM_CAMP=4 field bubble (Chebyshev distance 3).
+    # Pre-radius-rule the test used camp_x=99 to force off-camp; that
+    # also put the agent miles outside the plantable area, so plant
+    # would now be refused and the test would (incorrectly) read as
+    # broken behaviour rather than a tightened gate.
+    c = EngineColony(id=1, name='Test', color='#000', camp_x=5, camp_y=5,
                      food_stock=18, growing_count=0)
     d = decide_action(a, _grass_world(), c, 'day')
     assert d.action == 'plant'

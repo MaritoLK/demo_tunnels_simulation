@@ -24,3 +24,11 @@ REVEAL_RADIUS = 1
 # memory turns over within a few days, big enough that a single
 # depleted tile doesn't strand the agent.
 FOOD_MEMORY_MAX = 3
+
+# Crops are clustered into a square (Chebyshev) field around the colony's
+# camp instead of speckling the world. 4 = a 9x9 area centered on camp,
+# minus the camp tile itself (where the house sprite renders). Tunable:
+# bump for more crop real estate, drop for tighter agriculture. Pre-fix
+# agents planted anywhere they hit empty grass, including ON the camp
+# sprite — visually noisy and made fields impossible to read at a glance.
+PLANT_RADIUS_FROM_CAMP = 4

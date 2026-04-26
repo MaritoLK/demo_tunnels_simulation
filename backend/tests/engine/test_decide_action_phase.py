@@ -102,10 +102,19 @@ def test_night_phase_rests_outdoors_anywhere():
 
 def test_dawn_on_camp_full_hunger_is_productive():
     """Post-rework: at-camp agent at dawn who can't eat falls through
-    to day-chain productivity instead of sham-resting. Planting on an
-    empty camp tile is the natural choice."""
+    to day-chain productivity instead of sham-resting. The camp tile
+    itself is no longer plant-eligible (the house sprite renders
+    there); the natural choice is exploring out toward the field area
+    or wider map. Either way the action must be NON-IDLE."""
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
     a.hunger = needs.NEED_MAX  # can't eat
     c = _colony()
-    assert decide_action(a, w, c, 'dawn').action == 'plant'
+    decision = decide_action(a, w, c, 'dawn')
+    assert decision.action != 'rest', (
+        f'sham-rest regression — got {decision.action!r}'
+    )
+    # Plant is NOT valid on the camp tile; the at-camp full-hunger
+    # agent should drift productively (explore). Pinned to catch a
+    # regression where we silently let plant fire on the camp again.
+    assert decision.action != 'plant'

@@ -177,11 +177,12 @@ def decide_action(agent, world, colony, phase) -> Decision:
     if agent.cargo < needs.CARRY_MAX and actions.adjacent_food_tile(agent, world) is not None:
         return Decision('forage', 'food in reach → forage on sight')
 
-    # 8. Plant: empty tile + free field slot → start a crop.
-    if (tile.crop_state == 'none'
-            and tile.resource_amount == 0
-            and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
-        return Decision('plant', 'empty tile → plant')
+    # 8. Plant: empty tile + free field slot + within camp's field radius
+    # → start a crop. The full gate lives in actions.is_plantable so the
+    # ladder check and the plant action's re-check share one source of
+    # truth (CLAUDE.md design principle).
+    if actions.is_plantable(tile, colony):
+        return Decision('plant', 'empty tile near camp → plant')
 
     # 9. Rogue eat-from-pouch
     if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
@@ -267,6 +268,19 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     scale = needs.NIGHT_HUNGER_SCALE if phase == 'night' else 1.0
     needs.decay_needs(agent, hunger_scale=scale)
 
+    # At-camp passive social refill — runs every tick, not gated by
+    # decide_action. Without this the socialise action almost never
+    # fires (both-on-camp coincidence) and every agent eventually
+    # drifts to rogue. Looking up colony here once so both passive
+    # social AND the later decide_action share the same reference.
+    colony = colonies_by_id.get(agent.colony_id)
+    if colony is None:
+        raise KeyError(
+            f"Agent {agent.id!r} has colony_id={agent.colony_id!r} "
+            f"not in colonies_by_id {list(colonies_by_id)!r}"
+        )
+    needs.apply_passive_social(agent, colony)
+
     if agent.health <= 0:
         events.append(actions.die(agent))
         return events
@@ -284,26 +298,21 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
         agent.age += 1
         return events
 
-    # Every agent belongs to a colony in the map. A miss means a data-drift
-    # bug (stale colony_id, test setup gap). Fail loud at the lookup boundary
-    # rather than NPE-ing later in decide_action's at_camp / cargo / plant paths.
-    colony = colonies_by_id.get(agent.colony_id)
-    if colony is None:
-        raise KeyError(
-            f"Agent {agent.id!r} has colony_id={agent.colony_id!r} "
-            f"not in colonies_by_id {list(colonies_by_id)!r}"
-        )
+    # `colony` was already resolved (and validated) above, before the
+    # passive-social step. Reused here so the lookup is only paid once
+    # per tick and the same reference flows into decide_action.
     decision = decide_action(agent, world, colony, phase)
     agent.last_decision_reason = decision.reason
     pre_x, pre_y = agent.x, agent.y
     events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
-    # Walk-skill counter: lifetime steps drive the reveal-radius tier.
-    # Increment only on a successful position change so the metric
-    # tracks distance travelled, not turns spent — an agent stuck on a
-    # high-cost tile (move_cooldown > 0) doesn't get credit for a step
-    # they didn't actually take.
+    # Walk-skill counter + per-step energy cost: both gated on a real
+    # position change so a cooldown-locked tick doesn't get billed.
+    # Pre-fix energy was effectively decorative — constant decay alone
+    # never threatened to drain the meter. The per-step cost makes
+    # active agents feel the work.
     if (agent.x, agent.y) != (pre_x, pre_y):
         agent.tiles_walked += 1
+        agent.energy = max(0.0, agent.energy - needs.ENERGY_PER_STEP)
 
     agent.age += 1
     return events

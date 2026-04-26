@@ -476,24 +476,61 @@ def die(agent):
     }
 
 
+def is_plantable(tile, colony):
+    """Return True if `tile` is a valid plant target for `colony`.
+
+    Single source of truth for the plant gate — both decide_action and
+    the plant action consult this so the ladder check and the action
+    re-check can never drift (CLAUDE.md design principle: paired logic
+    in one function).
+
+    Five rules, all cheap:
+      * Tile is empty (no crop, no wild resource).
+      * Colony hasn't already maxed out its field count.
+      * Tile is NOT the camp tile — the house sprite renders there.
+        A crop dot under the house clips visually + competes with the
+        deposit / eat / socialise actions firing on the same tile.
+      * Tile is within Chebyshev radius PLANT_RADIUS_FROM_CAMP of the
+        colony's camp. Pre-fix agents planted anywhere they hit empty
+        grass, scattering crop dots across the map and turning the
+        food economy into white noise. Clustering keeps fields legible
+        as 'colony agriculture' rather than 'random green dots'.
+    """
+    if tile.crop_state != 'none':
+        return False
+    if tile.resource_amount > 0:
+        return False
+    if colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
+        return False
+    if colony.is_at_camp(tile.x, tile.y):
+        return False
+    if max(abs(tile.x - colony.camp_x), abs(tile.y - colony.camp_y)) > config.PLANT_RADIUS_FROM_CAMP:
+        return False
+    return True
+
+
 def plant(agent, world, colony):
     """Convert the tile under `agent` into a growing crop owned by `colony`.
 
-    Pre-conditions (caller should already have checked via decide_action):
-      * tile.crop_state == 'none'
-      * tile.resource_amount == 0 (i.e. empty wild)
-      * colony.growing_count < config.MAX_FIELDS_PER_COLONY
-
-    This function re-guards all three; a violated pre-condition yields an
-    `idled` no-op event so the engine never silently mutates state.
+    Pre-condition: `is_plantable(tile, colony)` must hold. Caller (the
+    decide_action plant rung) already checks this; we re-guard here so
+    the engine never silently mutates state on a violated invariant —
+    a stale tick with a depleting cap, or a debug call that bypasses
+    the ladder, idles instead of corrupting state.
     """
     tile = world.get_tile(agent.x, agent.y)
-    if tile.crop_state != 'none':
-        return {'type': 'idled', 'description': f'{agent.name} found crop already here'}
-    if tile.resource_amount > 0:
-        return {'type': 'idled', 'description': f'{agent.name} found wild food here, skipping plant'}
-    if colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
-        return {'type': 'idled', 'description': f'{agent.name} deferred plant (field cap)'}
+    if not is_plantable(tile, colony):
+        if tile.crop_state != 'none':
+            reason = 'found crop already here'
+        elif tile.resource_amount > 0:
+            reason = 'found wild food here, skipping plant'
+        elif colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
+            reason = 'deferred plant (field cap)'
+        elif colony.is_at_camp(tile.x, tile.y):
+            reason = 'cannot plant on the camp tile'
+        else:
+            reason = 'too far from camp to plant'
+        return {'type': 'idled', 'description': f'{agent.name} {reason}'}
 
     tile.crop_state = 'growing'
     tile.crop_growth_ticks = 0
@@ -562,6 +599,13 @@ def deposit_cargo(agent, colony):
     amount = agent.cargo
     colony.food_stock += amount
     agent.cargo = 0.0
+    # Social bump for non-rogue agents — depositing is a natural
+    # "back home with food, tribe gathers around" moment. Without
+    # this the social need erodes monotonically until everyone goes
+    # rogue (1500-tick diagnostic, 2026-04-26). Rogues skip — rogue
+    # is a one-way collapse, going home doesn't reverse it.
+    if not agent.rogue:
+        agent.social = min(needs.NEED_MAX, agent.social + needs.DEPOSIT_SOCIAL_BUMP)
     agent.state = STATE_DEPOSITING
     return {
         'type': 'deposited',
