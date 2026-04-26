@@ -194,6 +194,32 @@ def adjacent_agent(agent, agents):
     return None
 
 
+def _forage_yield_from_d20(rng):
+    """Roll a d20 and band it onto a forage yield in tile units.
+
+    Banding (avg ≈ 2.0 — matches the prior flat FORAGE_TILE_DEPLETION so
+    long-run pacing is unchanged, but with visible variance):
+
+      1     → 0 (crit fail — fumbled)
+      2-5   → 1 (low)
+      6-15  → 2 (typical)
+      16-19 → 3 (good)
+      20    → 5 (crit — bumper crop)
+
+    Returns ``(roll, max_yield)``. The caller still clamps against tile
+    resource and pouch room — the d20 governs the ceiling, not the floor."""
+    roll = rng.randint(1, 20)
+    if roll == 1:
+        return roll, 0
+    if roll <= 5:
+        return roll, 1
+    if roll <= 15:
+        return roll, 2
+    if roll <= 19:
+        return roll, 3
+    return roll, 5
+
+
 def forage(agent, world, *, rng):
     # Honest-action guard: idle only when BOTH hunger and pouch are
     # full. A sated agent with empty cargo still forages (stockpiling
@@ -203,12 +229,14 @@ def forage(agent, world, *, rng):
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
-        # Taken from the tile is bounded by pouch room — an agent with
-        # nowhere to put surplus can't drain a tile for nothing. This
-        # is the food-scarcity invariant: tile units only leave the
-        # world through a pouch slot or a mouth.
+        # Taken from the tile is bounded by pouch room AND a d20 roll —
+        # an agent with nowhere to put surplus can't drain a tile for
+        # nothing, and the dice add narrative variance (a crit-fail
+        # forage takes home zero even when the tile is full). Tile
+        # units only leave the world through a pouch slot or a mouth.
         pouch_room = needs.CARRY_MAX - agent.cargo
-        taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount, pouch_room)
+        roll, ceiling = _forage_yield_from_d20(rng)
+        taken = min(ceiling, tile.resource_amount, pouch_room)
         tile.resource_amount -= taken
         agent.cargo += taken
         # Hunger fills regardless — the gather action doubles as eating
@@ -219,13 +247,16 @@ def forage(agent, world, *, rng):
         agent.state = STATE_FORAGING
         return {
             'type': 'foraged',
-            'description': f'{agent.name} gathered food at ({tile.x},{tile.y})',
+            'description': f'{agent.name} gathered food at ({tile.x},{tile.y}) (d20={roll})',
             # Structured payload drives the persistence dirty-set: the service
-            # updates exactly the tile rows whose amount changed.
+            # updates exactly the tile rows whose amount changed. `roll` rides
+            # on the same event so the renderer can flash a dice chip above
+            # the foraging agent for narrative feedback.
             'data': {
                 'tile_x': tile.x,
                 'tile_y': tile.y,
                 'amount_taken': taken,
+                'roll': roll,
             },
         }
 

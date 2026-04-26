@@ -79,6 +79,13 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
 // appear/disappear at the same zoom level.
 const LABEL_MIN_TILE_PX = 14;
 
+// How long a d20 forage chip stays on screen above the rolling agent.
+// 1500 ms is long enough for the eye to land on the number and parse
+// "1d20 = N" before it fades, short enough that two consecutive rolls
+// from the same agent don't stack visually. Chip alpha lerps to 0 over
+// the window so the disappearance reads as a fade, not a snap.
+const DICE_CHIP_DURATION_MS = 1500;
+
 /**
  * Pick the pawn animation variant for `agent`. Motion comes from
  * position delta (not state string) — the engine's STATE_FORAGING
@@ -195,7 +202,7 @@ export class Canvas2DRenderer implements Renderer {
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, selectedTile, reducedMotion,
+      selectedAgentId, selectedTile, reducedMotion, recentForageRolls,
     } = snap;
 
     // Sample the interpolation buffer one tick interval behind `now`, so
@@ -668,6 +675,37 @@ export class Canvas2DRenderer implements Renderer {
         ctx.strokeText(meta.label, cx, labelY);
         ctx.fillStyle = meta.color;
         ctx.fillText(meta.label, cx, labelY);
+      }
+
+      // d20 dice chip — flashes the most recent forage roll above the
+      // agent for DICE_CHIP_DURATION_MS, fading to zero alpha by the
+      // end of the window. Crit (20) and crit-fail (1) get distinct
+      // tints so the rare beats read at a glance without needing a
+      // legend. Drawn above the state label (cy - r*2.0) so it doesn't
+      // collide with the action word.
+      const rollEntry = recentForageRolls?.get(a.id);
+      if (rollEntry && tilePx >= LABEL_MIN_TILE_PX) {
+        const elapsed = now - rollEntry.receivedAtMs;
+        if (elapsed >= 0 && elapsed < DICE_CHIP_DURATION_MS) {
+          const fade = 1 - elapsed / DICE_CHIP_DURATION_MS;
+          let chipColor = '#ffffff';
+          if (rollEntry.roll === 1) chipColor = '#ff5555';
+          else if (rollEntry.roll === 20) chipColor = '#ffd23f';
+          const fontPx = Math.max(10, Math.floor(tilePx * 0.36));
+          ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          const chipY = cy - r * 2.0;
+          const text = `🎲 ${rollEntry.roll}`;
+          ctx.save();
+          ctx.globalAlpha *= fade;
+          ctx.lineWidth = Math.max(2, tilePx * 0.1);
+          ctx.strokeStyle = 'rgba(10,12,18,0.85)';
+          ctx.strokeText(text, cx, chipY);
+          ctx.fillStyle = chipColor;
+          ctx.fillText(text, cx, chipY);
+          ctx.restore();
+        }
       }
 
       if (a.id === selectedAgentId) {

@@ -100,6 +100,13 @@ export function WorldCanvas() {
   // of the same instant, span=0, and every agent snaps to target until
   // the next genuine tick arrives. Dedup by server timestamp here.
   const lastIngestedServerMsRef = useRef<number>(-1);
+  // Per-agent recent d20 roll tracker. Populated from incoming `foraged`
+  // events; the renderer flashes a chip above the agent for a short
+  // window after each roll. Stored in a ref because the data is purely
+  // visual feedback — no need to reactively re-render React on every
+  // poll/SSE message; the rAF loop will pick up fresh values via the
+  // FrameSnapshot we hand to drawFrame.
+  const recentForageRollsRef = useRef<Map<number, { roll: number; receivedAtMs: number; tick: number }>>(new Map());
 
   const sim = useSimulation();
   const world = useWorld();
@@ -129,6 +136,30 @@ export function WorldCanvas() {
     const effectiveAgents = streamSnap?.agents ?? agents.data ?? [];
     const effectiveSim = streamSnap?.sim ?? sim.data;
     const effectiveColonies = streamSnap?.colonies ?? colonies.data ?? [];
+
+    // Pull any new d20 forage rolls out of the event stream so the
+    // renderer can flash a chip above the rolling agent. Dedup by
+    // (agent_id, tick) — a single forage event may appear in
+    // consecutive snapshots; without the dedup the chip's receivedAtMs
+    // resets each poll and the chip "sticks" forever instead of fading.
+    const events = streamSnap?.events ?? [];
+    if (events.length > 0) {
+      const nowMs = performance.now();
+      for (const ev of events) {
+        if (ev.type !== 'foraged' || ev.agent_id == null) continue;
+        const data = ev.data as { roll?: number } | null | undefined;
+        const roll = data?.roll;
+        if (typeof roll !== 'number') continue;
+        const prev = recentForageRollsRef.current.get(ev.agent_id);
+        if (prev && prev.tick === ev.tick) continue;
+        recentForageRollsRef.current.set(ev.agent_id, {
+          roll,
+          receivedAtMs: nowMs,
+          tick: ev.tick,
+        });
+      }
+    }
+
     snapRef.current = {
       width: world.data.width,
       height: world.data.height,
@@ -147,6 +178,7 @@ export function WorldCanvas() {
       currentTick: effectiveSim?.tick ?? 0,
       serverNowMs: effectiveSim?.server_time_ms,
       phase: effectiveSim?.phase,
+      recentForageRolls: recentForageRollsRef.current,
     };
     if (
       rendererRef.current
