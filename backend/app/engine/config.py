@@ -12,3 +12,8 @@ CROP_MATURE_TICKS = 60
 WILD_RESOURCE_MAX = 5
 WILD_TILE_DENSITY = 0.15
 MAX_FIELDS_PER_COLONY = 4
+
+# Fog of war reveal radius (Chebyshev — square ring around the agent).
+# 1 = the 3x3 block centred on the agent. Future: scaled by walking-skill
+# tier so veteran scouts uncover wider areas.
+REVEAL_RADIUS = 1

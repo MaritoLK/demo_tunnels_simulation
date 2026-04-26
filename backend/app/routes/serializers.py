@@ -53,6 +53,11 @@ def tile_to_dict(tile):
 
 
 def colony_to_dict(colony):
+    # `explored` is a Python set of (x, y) tuples — sort it for a stable
+    # wire shape so two snapshots with the same fog produce identical
+    # bytes (cache-key friendly behind the nginx micro-cache and trivial
+    # to diff during demos). The list-of-pairs form keeps the renderer
+    # close to the engine's coord type without a JSON-key gymnastics pass.
     return {
         'id': colony.id,
         'name': colony.name,
@@ -62,6 +67,7 @@ def colony_to_dict(colony):
         'food_stock': colony.food_stock,
         'growing_count': colony.growing_count,
         'sprite_palette': colony.sprite_palette,
+        'explored': sorted(colony.explored),
     }
 
 

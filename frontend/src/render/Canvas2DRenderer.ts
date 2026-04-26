@@ -318,6 +318,35 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
+    // Fog of war veil. Each colony tracks its own `explored` set
+    // (engine-side, reset at dusk → night). The renderer takes the
+    // union so any colony's reveal counts as "the player's view" for
+    // this demo — per-colony toggling is a later feature. Cells that
+    // no colony has touched render as opaque shell-color so the world
+    // beyond the agents' reach looks unknown rather than lit-but-empty.
+    // Drawn after terrain and before camps/crops/agents — by
+    // construction those layers all sit on tiles their owning colony
+    // has revealed, so the veil never covers a camp / crop / agent.
+    const exploredCells = new Set<number>();
+    for (const c of colonies) {
+      if (!c.explored) continue;
+      for (const [x, y] of c.explored) {
+        exploredCells.add(y * width + x);
+      }
+    }
+    if (exploredCells.size > 0) {
+      // Skip the pass when the engine hasn't sent fog yet (older client
+      // / first-tick race) so the world isn't all-dark before the first
+      // reveal lands.
+      ctx.fillStyle = '#0e1220';
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (exploredCells.has(y * width + x)) continue;
+          ctx.fillRect(x * tilePx, y * tilePx, tilePx, tilePx);
+        }
+      }
+    }
+
     // Camp markers — house sprite when atlas is loaded, colored square
     // fallback otherwise. Drawn above terrain so the camp reads as a
     // built object, below agents so the occupant covers their own tile.

@@ -78,6 +78,13 @@ export interface Colony {
   // so a future colony rename doesn't lose its visual identity.
   // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).
   sprite_palette: string;
+  // Tiles this colony has revealed since the last fog reset (cleared at
+  // dusk → night). Sorted on the wire so identical fog produces
+  // identical bytes — keeps the nginx micro-cache and SSE diff happy.
+  // Optional because older clients may receive a payload without it
+  // during a rolling deploy; the renderer falls back to "all explored"
+  // when missing rather than blacking out the world.
+  explored?: Array<[number, number]>;
 }
 
 export interface SimulationSummary {

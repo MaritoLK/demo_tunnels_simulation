@@ -108,6 +108,18 @@ class Simulation:
     def step(self):
         events = []
         phase = cycle.phase_for(self.current_tick)
+
+        # Fog reset: at the dusk → night phase boundary, every colony's
+        # explored set drops back to empty. Without this fog accumulates
+        # forever and exploration is a one-time tax. Pinning the reset to
+        # nightfall gives each day a stake — the colony has to find its
+        # food before sunset or wake up tomorrow with the map dark again.
+        if self.current_tick > 0:
+            prev_phase = cycle.phase_for(self.current_tick - 1)
+            if prev_phase != 'night' and phase == 'night':
+                for colony in self.colonies.values():
+                    colony.explored.clear()
+
         self.recompute_growing_counts()
         snapshot = list(self.agents)
         for agent in snapshot:
@@ -120,11 +132,40 @@ class Simulation:
                 event['tick'] = self.current_tick
                 event['agent_id'] = agent.id
                 events.append(event)
+
+        # Fog reveal: each non-rogue alive agent paints its colony's
+        # REVEAL_RADIUS square onto colony.explored. Run after the agent
+        # tick loop so the reveal reflects where the agent actually
+        # ended up this tick. Rogue agents skip — no colony tie, no fog
+        # contribution, mirrors the rogue exclusion in the camp branches
+        # of the decision ladder.
+        self._refresh_fog(snapshot)
+
         for event in self.world.tick(phase):
             event['tick'] = self.current_tick
             events.append(event)
         self.current_tick += 1
         return events
+
+    def _refresh_fog(self, snapshot):
+        radius = config.REVEAL_RADIUS
+        width = self.world.width
+        height = self.world.height
+        for agent in snapshot:
+            if not agent.alive or agent.rogue:
+                continue
+            if agent.colony_id is None:
+                continue
+            colony = self.colonies.get(agent.colony_id)
+            if colony is None:
+                continue
+            ax, ay = agent.x, agent.y
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    tx = ax + dx
+                    ty = ay + dy
+                    if 0 <= tx < width and 0 <= ty < height:
+                        colony.explored.add((tx, ty))
 
     def recompute_growing_counts(self):
         """Re-derive `colony.growing_count` from tile state.

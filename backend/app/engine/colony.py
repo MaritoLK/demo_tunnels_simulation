@@ -10,7 +10,8 @@ deltas via dirty-colony set after the step returns.
 
 class EngineColony:
     __slots__ = ('id', 'name', 'color', 'camp_x', 'camp_y',
-                 'food_stock', 'growing_count', 'sprite_palette')
+                 'food_stock', 'growing_count', 'sprite_palette',
+                 'explored')
 
     def __init__(self, id, name, color, camp_x, camp_y,
                  food_stock, growing_count=0, sprite_palette='Blue'):
@@ -22,6 +23,13 @@ class EngineColony:
         self.food_stock = food_stock
         self.growing_count = growing_count
         self.sprite_palette = sprite_palette
+        # Set of (x, y) tiles this colony has revealed since the last
+        # fog reset. Refilled per tick from each non-rogue agent's
+        # reveal radius; cleared at the dusk → night phase boundary so
+        # the colony must re-explore each new day. In-memory only —
+        # demo restarts naturally re-fog the map. Persistence can be
+        # added later if it earns its keep.
+        self.explored = set()
 
     def is_at_camp(self, x, y):
         return x == self.camp_x and y == self.camp_y
