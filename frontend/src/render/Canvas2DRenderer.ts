@@ -479,29 +479,40 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Crop overlay — paired dots, same style across states:
-    //   growing → green dot (planted, not yet ripe)
-    //   mature  → yellow dot (harvestable)
-    // Earlier revisions drew a bush sprite for 'growing' when the atlas
-    // was loaded, but the sprite collided visually with wild bush
-    // decorations on forest tiles. Uniform-dot style (green↔yellow)
-    // reads like a simple state change rather than two different things.
+    // Crop overlay — Tiny Swords bush sprites:
+    //   growing → Bushe4 (leafy green, sprouting)
+    //   mature  → Bushe3 (golden, full canopy)
+    // Source frames are 128×128 with the bush body centred and ~16px
+    // padding — same crop math as the forest decoration pass below.
+    // Falls back to colored circles when the atlas is still loading
+    // so the first paint after a fresh load isn't a blank field.
     for (let y = 0; y < height; y++) {
       const row = tiles[y];
       if (!row) continue;
       for (let x = 0; x < width; x++) {
         const t = row[x];
         if (!t || t.crop_state === 'none') continue;
-        const ccx = x * tilePx + tilePx / 2;
-        const ccy = y * tilePx + tilePx / 2;
-        const cr = Math.max(2, tilePx * 0.22);
-        ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
-        ctx.beginPath();
-        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-        ctx.lineWidth = Math.max(1, tilePx * 0.06);
-        ctx.stroke();
+        const px = x * tilePx;
+        const py = y * tilePx;
+        if (sprites) {
+          const sheet = t.crop_state === 'mature'
+            ? sprites.cropMature
+            : sprites.cropGrowing;
+          // Tight 16,16,96,96 crop on the centred bush body — same
+          // recipe as the forest decoration pass.
+          ctx.drawImage(sheet, 16, 16, 96, 96, px, py, tilePx, tilePx);
+        } else {
+          const ccx = px + tilePx / 2;
+          const ccy = py + tilePx / 2;
+          const cr = Math.max(2, tilePx * 0.22);
+          ctx.fillStyle = t.crop_state === 'mature' ? '#f1c40f' : '#5cbd4a';
+          ctx.beginPath();
+          ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          ctx.lineWidth = Math.max(1, tilePx * 0.06);
+          ctx.stroke();
+        }
       }
     }
 

@@ -60,6 +60,43 @@ def test_is_plantable_rejects_camp_tile():
     )
 
 
+def test_is_plantable_rejects_tiles_inside_house_footprint():
+    # The house sprite is 2 tiles wide × 3 tall, anchored to the camp
+    # tile and extending 2 tiles UP (toward lower y). A naive
+    # "reject only the camp tile" gate let crops land under the
+    # house roof or wings — visually they sat behind the building
+    # at fit-zoom. PLANT_NO_BUILD_RADIUS reserves a Chebyshev 2 box
+    # (5x5 area) around camp so the house and its safety margin
+    # stay clean.
+    w = _grass()
+    colony = _colony(camp_x=10, camp_y=10)
+    # Sample a few tiles that should be inside the no-build zone.
+    for dx, dy in [(0, -2), (0, -1), (-1, 0), (1, 0), (-2, 0), (0, 2),
+                   (-2, -2), (2, 2)]:
+        tile = w.get_tile(10 + dx, 10 + dy)
+        assert not actions.is_plantable(tile, colony), (
+            f'tile at offset ({dx},{dy}) (Chebyshev '
+            f'{max(abs(dx), abs(dy))}) plantable inside no-build '
+            f'radius {config.PLANT_NO_BUILD_RADIUS}'
+        )
+
+
+def test_is_plantable_accepts_tiles_just_outside_no_build_radius():
+    # Tiles at Chebyshev exactly NO_BUILD_RADIUS+1 should be the
+    # innermost plantable ring. Pin the lower bound of the field
+    # explicitly so a future tweak that closed the inequality the
+    # wrong way (>= vs >) would fail loud.
+    w = _grass()
+    colony = _colony(camp_x=10, camp_y=10)
+    inner = config.PLANT_NO_BUILD_RADIUS + 1
+    for dx, dy in [(inner, 0), (-inner, 0), (0, inner), (0, -inner)]:
+        tile = w.get_tile(10 + dx, 10 + dy)
+        assert actions.is_plantable(tile, colony), (
+            f'innermost ring tile at ({dx},{dy}) (Chebyshev {inner}) '
+            f'should be plantable but was rejected'
+        )
+
+
 def test_is_plantable_rejects_tile_outside_field_radius():
     w = _grass()
     colony = _colony(camp_x=10, camp_y=10)
@@ -81,7 +118,7 @@ def test_is_plantable_rejects_growing_or_resourced_tile():
     w = _grass()
     colony = _colony(camp_x=10, camp_y=10)
     # Empty + within radius → ok
-    near = w.get_tile(11, 11)
+    near = w.get_tile(13, 13)
     assert actions.is_plantable(near, colony)
     # Add a growing crop → no
     near.crop_state = 'growing'
@@ -97,7 +134,7 @@ def test_is_plantable_rejects_when_field_cap_reached():
     w = _grass()
     colony = _colony(camp_x=10, camp_y=10)
     colony.growing_count = config.MAX_FIELDS_PER_COLONY
-    near = w.get_tile(11, 11)
+    near = w.get_tile(13, 13)
     assert not actions.is_plantable(near, colony)
 
 
@@ -125,12 +162,12 @@ def test_plant_action_idles_far_from_camp():
 
 
 def test_plant_action_succeeds_within_field_radius():
-    a = _fresh_agent(11, 11)
+    a = _fresh_agent(13, 13)
     w = _grass()
     colony = _colony(camp_x=10, camp_y=10)
     ev = actions.plant(a, w, colony)
     assert ev['type'] == 'planted'
-    assert w.get_tile(11, 11).crop_state == 'growing'
+    assert w.get_tile(13, 13).crop_state == 'growing'
 
 
 # ---- decide_action consistency with is_plantable -------------------------
@@ -167,7 +204,7 @@ def test_decide_action_does_not_pick_plant_far_from_camp():
 
 
 def test_decide_action_picks_plant_on_eligible_field_tile():
-    a = _fresh_agent(11, 11)
+    a = _fresh_agent(13, 13)
     w = _grass()
     colony = _colony(camp_x=10, camp_y=10)
     decision = decide_action(a, w, colony, 'day')

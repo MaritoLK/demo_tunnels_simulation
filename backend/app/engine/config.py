@@ -26,11 +26,13 @@ REVEAL_RADIUS = 1
 FOOD_MEMORY_MAX = 3
 
 # Crops are clustered into a square (Chebyshev) field around the colony's
-# camp instead of speckling the world. 4 = a 9x9 area centered on camp,
-# minus the camp tile itself (where the house sprite renders). Tunable:
-# bump for more crop real estate, drop for tighter agriculture. Pre-fix
-# agents planted anywhere they hit empty grass, including ON the camp
-# sprite — visually noisy and made fields impossible to read at a glance.
+# camp. The plantable area is the ring between PLANT_NO_BUILD_RADIUS and
+# PLANT_RADIUS_FROM_CAMP — i.e. far enough out that the oversized house
+# sprite (2 tiles wide × 3 tall, anchored to the camp tile and growing
+# upward) doesn't overlap any crops, but close enough to read as the
+# colony's field. With NO_BUILD=2 and FIELD=4 you get a 5×5 reserved
+# centre for the house + halo and a 9×9 - 5×5 = 56-tile plantable ring.
+PLANT_NO_BUILD_RADIUS = 2
 PLANT_RADIUS_FROM_CAMP = 4
 
 # Reproduction (dawn-meal ritual). Triggered in simulation.step at dawn

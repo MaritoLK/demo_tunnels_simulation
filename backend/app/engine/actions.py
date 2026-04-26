@@ -539,17 +539,13 @@ def is_plantable(tile, colony):
     re-check can never drift (CLAUDE.md design principle: paired logic
     in one function).
 
-    Five rules, all cheap:
+    Rules:
       * Tile is empty (no crop, no wild resource).
       * Colony hasn't already maxed out its field count.
-      * Tile is NOT the camp tile — the house sprite renders there.
-        A crop dot under the house clips visually + competes with the
-        deposit / eat / socialise actions firing on the same tile.
-      * Tile is within Chebyshev radius PLANT_RADIUS_FROM_CAMP of the
-        colony's camp. Pre-fix agents planted anywhere they hit empty
-        grass, scattering crop dots across the map and turning the
-        food economy into white noise. Clustering keeps fields legible
-        as 'colony agriculture' rather than 'random green dots'.
+      * Tile sits in the field RING — Chebyshev distance to camp is
+        STRICTLY ABOVE PLANT_NO_BUILD_RADIUS (so the house sprite +
+        halo stay clean) AND AT MOST PLANT_RADIUS_FROM_CAMP (so the
+        field reads as 'near home' rather than scattered).
     """
     if tile.crop_state != 'none':
         return False
@@ -557,9 +553,10 @@ def is_plantable(tile, colony):
         return False
     if colony.growing_count >= config.MAX_FIELDS_PER_COLONY:
         return False
-    if colony.is_at_camp(tile.x, tile.y):
+    chebyshev = max(abs(tile.x - colony.camp_x), abs(tile.y - colony.camp_y))
+    if chebyshev <= config.PLANT_NO_BUILD_RADIUS:
         return False
-    if max(abs(tile.x - colony.camp_x), abs(tile.y - colony.camp_y)) > config.PLANT_RADIUS_FROM_CAMP:
+    if chebyshev > config.PLANT_RADIUS_FROM_CAMP:
         return False
     return True
 

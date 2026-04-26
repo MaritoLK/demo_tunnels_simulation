@@ -25,6 +25,13 @@ import meatUrl from '../assets/tiny-swords/free/Terrain/Resources/Meat/Meat Reso
 // it), rocks are static 64×64. We use frame 0 of the bush for a
 // still pose.
 import bushUrl from '../assets/tiny-swords/free/Terrain/Decorations/Bushes/Bushe1.png';
+// Crop overlay sprites — Bushe4 (leafy green) for the 'growing' state
+// and Bushe3 (golden, denser canopy) for 'mature'. Same 1024×128 strip
+// shape as bushUrl; we read frame 0 as a still pose. Replaced the
+// previous green/yellow circles so crops feel like grown plants
+// rather than pin-marker dots.
+import cropGrowingUrl from '../assets/tiny-swords/free/Terrain/Decorations/Bushes/Bushe4.png';
+import cropMatureUrl from '../assets/tiny-swords/free/Terrain/Decorations/Bushes/Bushe3.png';
 import rockUrl from '../assets/tiny-swords/free/Terrain/Decorations/Rocks/Rock1.png';
 // 4 colors × 4 variants = 16 explicit imports (Vite needs static URL
 // strings; can't build import paths at runtime). Cargo-aware variants
@@ -63,6 +70,8 @@ export interface SpriteAtlas {
   water: HTMLImageElement;
   meat: HTMLImageElement;
   bush: HTMLImageElement;
+  cropGrowing: HTMLImageElement;
+  cropMature: HTMLImageElement;
   rock: HTMLImageElement;
   // Deprecated — the old single-pawn field. Kept for compatibility with
   // any render path that hasn't migrated to the per-palette lookup yet;
@@ -135,7 +144,7 @@ export async function loadSprites(): Promise<SpriteAtlas> {
   };
 
   const [
-    tilemap, water, meat, bush, rock,
+    tilemap, water, meat, bush, cropGrowing, cropMature, rock,
     redPawns, bluePawns, purplePawns, yellowPawns,
     houseRed, houseBlue, housePurple, houseYellow,
   ] = await Promise.all([
@@ -143,6 +152,8 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     loadImage(waterUrl),
     loadImage(meatUrl),
     loadImage(bushUrl),
+    loadImage(cropGrowingUrl),
+    loadImage(cropMatureUrl),
     loadImage(rockUrl),
     loadPair({ idle: redIdleUrl,    run: redRunUrl,    idleMeat: redIdleMeatUrl,    runMeat: redRunMeatUrl }),
     loadPair({ idle: blueIdleUrl,   run: blueRunUrl,   idleMeat: blueIdleMeatUrl,   runMeat: blueRunMeatUrl }),
@@ -155,7 +166,7 @@ export async function loadSprites(): Promise<SpriteAtlas> {
   ]);
 
   return {
-    tilemap, water, meat, bush, rock,
+    tilemap, water, meat, bush, cropGrowing, cropMature, rock,
     // legacy single-pawn field = Blue idle (Task 11 retires this)
     pawn: bluePawns.idle,
     pawns: {

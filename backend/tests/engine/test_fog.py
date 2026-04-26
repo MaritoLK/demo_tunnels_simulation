@@ -44,13 +44,17 @@ def _sim_with_one_agent(*, agent_x, agent_y, rogue=False, colony=None):
 
 
 def test_step_reveals_3x3_around_alive_agent():
-    sim, colony, _agent = _sim_with_one_agent(agent_x=4, agent_y=4)
-    sim.step()
+    # Reveal logic isolated from agent decision-making: a full sim.step
+    # would push the agent through decide_action, which now might pick
+    # 'explore' on the same tick (plant gate is radius-bounded), moving
+    # the agent and shifting the reveal centre. Calling _refresh_fog
+    # directly pins the radius pass without coupling to action choice.
+    sim, colony, agent = _sim_with_one_agent(agent_x=4, agent_y=4)
+    sim._refresh_fog([agent])
     expected = {(x, y) for x in range(3, 6) for y in range(3, 6)}
     assert expected.issubset(colony.explored), (
         f'expected 3x3 reveal centred on (4,4); got {sorted(colony.explored)}'
     )
-    # And nothing outside the radius
     extras = colony.explored - expected
     assert not extras, f'reveal leaked outside radius: {sorted(extras)}'
 
@@ -58,8 +62,8 @@ def test_step_reveals_3x3_around_alive_agent():
 def test_reveal_clamps_to_world_bounds():
     # Agent at the corner — bottom and right rows of the 3x3 are out of
     # bounds and must not be added.
-    sim, colony, _agent = _sim_with_one_agent(agent_x=0, agent_y=0)
-    sim.step()
+    sim, colony, agent = _sim_with_one_agent(agent_x=0, agent_y=0)
+    sim._refresh_fog([agent])
     expected = {(0, 0), (0, 1), (1, 0), (1, 1)}
     assert colony.explored == expected, (
         f'expected only in-bounds quadrant; got {sorted(colony.explored)}'
