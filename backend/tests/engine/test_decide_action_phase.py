@@ -29,20 +29,20 @@ def test_day_phase_harvest_wins_over_plant_when_on_mature_tile():
     w = _grass_world()
     w.get_tile(2, 2).crop_state = 'mature'
     a = _fresh_agent()
-    assert decide_action(a, w, _colony(), 'day') == 'harvest'
+    assert decide_action(a, w, _colony(), 'day').action == 'harvest'
 
 
 def test_day_phase_plant_chosen_on_empty_tile():
     w = _grass_world()
     a = _fresh_agent()
-    assert decide_action(a, w, _colony(), 'day') == 'plant'
+    assert decide_action(a, w, _colony(), 'day').action == 'plant'
 
 
 def test_day_phase_growing_tile_skips_both():
     w = _grass_world()
     w.get_tile(2, 2).crop_state = 'growing'
     a = _fresh_agent()
-    action = decide_action(a, w, _colony(), 'day')
+    action = decide_action(a, w, _colony(), 'day').action
     assert action in ('socialise', 'explore')
 
 
@@ -50,14 +50,14 @@ def test_hunger_critical_overrides_day_productive():
     w = _grass_world()
     a = _fresh_agent()
     a.hunger = needs.HUNGER_CRITICAL - 1
-    assert decide_action(a, w, _colony(), 'day') == 'forage'
+    assert decide_action(a, w, _colony(), 'day').action == 'forage'
 
 
 def test_max_fields_closes_plant_path():
     w = _grass_world()
     a = _fresh_agent()
     c = _colony(growing=config.MAX_FIELDS_PER_COLONY)
-    action = decide_action(a, w, c, 'day')
+    action = decide_action(a, w, c, 'day').action
     assert action != 'plant'
 
 
@@ -66,7 +66,7 @@ def test_dawn_phase_on_camp_returns_eat_when_hungry_and_stock():
     a = _fresh_agent(x=0, y=0)
     a.hunger = 60.0
     c = _colony()
-    assert decide_action(a, w, c, 'dawn') == 'eat_camp'
+    assert decide_action(a, w, c, 'dawn').action == 'eat_camp'
 
 
 def test_dawn_phase_off_camp_is_productive():
@@ -77,7 +77,7 @@ def test_dawn_phase_off_camp_is_productive():
     w = _grass_world()
     a = _fresh_agent(x=2, y=2)
     c = _colony()
-    assert decide_action(a, w, c, 'dawn') == 'plant'
+    assert decide_action(a, w, c, 'dawn').action == 'plant'
 
 
 def test_dusk_phase_is_productive():
@@ -85,7 +85,7 @@ def test_dusk_phase_is_productive():
     working until night, when they sleep where they stand."""
     w = _grass_world()
     a = _fresh_agent(x=2, y=2)
-    assert decide_action(a, w, _colony(), 'dusk') == 'plant'
+    assert decide_action(a, w, _colony(), 'dusk').action == 'plant'
 
 
 def test_night_phase_rests_outdoors_anywhere():
@@ -95,9 +95,9 @@ def test_night_phase_rests_outdoors_anywhere():
     half rate), so the day-is-productive / night-is-sleep rhythm holds."""
     w = _grass_world()
     a = _fresh_agent(x=0, y=0)  # on camp
-    assert decide_action(a, w, _colony(), 'night') == 'rest_outdoors'
+    assert decide_action(a, w, _colony(), 'night').action == 'rest_outdoors'
     a_field = _fresh_agent(x=2, y=2)  # off camp
-    assert decide_action(a_field, w, _colony(), 'night') == 'rest_outdoors'
+    assert decide_action(a_field, w, _colony(), 'night').action == 'rest_outdoors'
 
 
 def test_dawn_on_camp_full_hunger_is_productive():
@@ -108,4 +108,4 @@ def test_dawn_on_camp_full_hunger_is_productive():
     a = _fresh_agent(x=0, y=0)  # on camp
     a.hunger = needs.NEED_MAX  # can't eat
     c = _colony()
-    assert decide_action(a, w, c, 'dawn') == 'plant'
+    assert decide_action(a, w, c, 'dawn').action == 'plant'

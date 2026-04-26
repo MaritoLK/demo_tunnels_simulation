@@ -84,7 +84,7 @@ def replace_simulation():
     this wipes and rebuilds the singleton. See §9.21.
 
     Two mutually-exclusive calling shapes:
-      * Legacy: `agent_count=N` (pre-cultivation, no colony system).
+      * Random spawn: `agent_count=N` (default colony, random tiles).
       * Colonies: `colonies=K, agents_per_colony=M` (4-colony demo layout).
     """
     body = request.get_json(silent=True)
@@ -106,7 +106,7 @@ def replace_simulation():
 
     colonies = _require_int(
         body.get('colonies'), 'colonies',
-        min=0, max=4, allow_none=True,
+        min=0, max=simulation_service.MAX_COLONIES, allow_none=True,
     )
     agents_per_colony = _require_int(
         body.get('agents_per_colony'), 'agents_per_colony',
@@ -139,14 +139,16 @@ def replace_simulation():
         agent_count=agent_count,
     )
     control = simulation_service.get_simulation_control()
-    return serializers.simulation_summary(sim, control), 200
+    time = simulation_service.time_snapshot()
+    return serializers.simulation_summary(sim, control, time), 200
 
 
 @bp.get('/simulation')
 def get_simulation():
     sim = simulation_service.get_current_simulation()
     control = simulation_service.get_simulation_control()
-    return serializers.simulation_summary(sim, control), 200
+    time = simulation_service.time_snapshot()
+    return serializers.simulation_summary(sim, control, time), 200
 
 
 @bp.patch('/simulation/control')
@@ -228,11 +230,12 @@ def get_world_state():
     )
     sim = simulation_service.get_current_simulation()
     control = simulation_service.get_simulation_control()
+    time = simulation_service.time_snapshot()
     event_rows = simulation_service.query_events(
         since_tick=since_tick, limit=limit,
     )
     return {
-        'sim': serializers.simulation_summary(sim, control),
+        'sim': serializers.simulation_summary(sim, control, time),
         'world': serializers.world_to_dict(sim.world),
         'agents': [serializers.agent_to_dict(a) for a in sim.agents],
         'events': [serializers.event_row_to_dict(r) for r in event_rows],

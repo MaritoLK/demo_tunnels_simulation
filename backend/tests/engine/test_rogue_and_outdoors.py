@@ -119,7 +119,7 @@ def test_non_rogue_low_social_day_seeks_camp():
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)
     a.social = needs.SOCIAL_LOW - 1
     w = _grass_world()
-    action = decide_action(a, w, c, phase='day')
+    action = decide_action(a, w, c, phase='day').action
     assert action == 'step_to_camp'
 
 
@@ -129,7 +129,7 @@ def test_rogue_day_does_not_seek_camp():
     a.rogue = True
     a.social = 5.0
     w = _grass_world()
-    action = decide_action(a, w, c, phase='day')
+    action = decide_action(a, w, c, phase='day').action
     assert action != 'step_to_camp'
 
 
@@ -138,7 +138,7 @@ def test_rogue_dusk_does_not_step_to_camp():
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)
     a.rogue = True
     w = _grass_world()
-    action = decide_action(a, w, c, phase='dusk')
+    action = decide_action(a, w, c, phase='dusk').action
     assert action != 'step_to_camp'
 
 
@@ -154,7 +154,7 @@ def test_night_at_camp_rests_outdoors_post_rework():
     c = _colony(camp=(0, 0))
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     w = _grass_world()
-    action = decide_action(a, w, c, phase='night')
+    action = decide_action(a, w, c, phase='night').action
     assert action == 'rest_outdoors'
 
 
@@ -162,7 +162,7 @@ def test_night_far_from_camp_rests_outdoors():
     c = _colony(camp=(0, 0))
     a = Agent('A', 4, 4, agent_id=1, colony_id=1)
     w = _grass_world()
-    action = decide_action(a, w, c, phase='night')
+    action = decide_action(a, w, c, phase='night').action
     assert action == 'rest_outdoors'
 
 
@@ -172,7 +172,7 @@ def test_rogue_night_always_rests_outdoors_even_on_camp():
     a = Agent('A', 0, 0, agent_id=1, colony_id=1)
     a.rogue = True
     w = _grass_world()
-    action = decide_action(a, w, c, phase='night')
+    action = decide_action(a, w, c, phase='night').action
     assert action == 'rest_outdoors'
 
 

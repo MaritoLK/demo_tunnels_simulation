@@ -18,6 +18,7 @@ def agent_to_row(agent):
         age=agent.age,
         alive=agent.alive,
         colony_id=agent.colony_id,
+        cargo=agent.cargo,
     )
 
 
@@ -30,6 +31,7 @@ def row_to_agent(row):
     a.health = row.health
     a.age = row.age
     a.alive = row.alive
+    a.cargo = row.cargo
     return a
 
 
@@ -47,6 +49,7 @@ def update_agent_row(row, engine_agent):
     row.health = engine_agent.health
     row.age = engine_agent.age
     row.alive = engine_agent.alive
+    row.cargo = engine_agent.cargo
 
 
 def tile_to_row(tile):
@@ -60,19 +63,6 @@ def tile_to_row(tile):
         crop_growth_ticks=tile.crop_growth_ticks,
         crop_colony_id=tile.crop_colony_id,
     )
-
-
-def tile_to_row_mapping(tile):
-    # Legacy dict form, retained only for audit/bug5_n_flush.py and
-    # audit/bug6_no_rollback.py which reproduce the pre-fix bulk_insert_mappings
-    # shape. The live service now goes through tile_to_row + add_all.
-    return {
-        'x': tile.x,
-        'y': tile.y,
-        'terrain': tile.terrain,
-        'resource_type': tile.resource_type,
-        'resource_amount': tile.resource_amount,
-    }
 
 
 def row_to_tile(row):
@@ -148,6 +138,7 @@ def colony_to_row(c):
         camp_x=c.camp_x,
         camp_y=c.camp_y,
         food_stock=c.food_stock,
+        sprite_palette=c.sprite_palette,
     )
 
 
@@ -160,6 +151,7 @@ def row_to_colony(row):
         camp_x=row.camp_x,
         camp_y=row.camp_y,
         food_stock=row.food_stock,
+        sprite_palette=row.sprite_palette,
     )
 
 

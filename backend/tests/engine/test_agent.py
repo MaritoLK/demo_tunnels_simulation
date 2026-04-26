@@ -3,8 +3,9 @@ import random
 
 import pytest
 
-from app.engine import actions, needs
+from app.engine import actions, config, needs
 from app.engine.agent import Agent, decide_action, tick_agent
+from app.engine.colony import EngineColony
 from app.engine.world import Tile, World
 
 
@@ -17,22 +18,33 @@ def _grass_world(w=3, h=3):
     return world
 
 
+def _colony(camp_x=99, camp_y=99):
+    """Off-grid camp by default (no agent position lands on (99,99) in these
+    tests), and growing_count pinned at MAX so the plant branch never fires.
+    Both knobs keep the priority-ladder tests focused on need-driven actions
+    without crop-system noise."""
+    return EngineColony(id=1, name='Test', color='#000', camp_x=camp_x, camp_y=camp_y,
+                        food_stock=18, growing_count=config.MAX_FIELDS_PER_COLONY)
+
+
 def test_tick_agent_emits_tick_field_via_simulation():
     # tick_agent itself returns per-agent events without tick set — that's
     # the Simulation.step contract. Just assert the list is iterable here.
     world = _grass_world()
-    agent = Agent('Alice', 1, 1)
-    events = list(tick_agent(agent, world, [agent], rng=random.Random(0)))
+    agent = Agent('Alice', 1, 1, colony_id=1)
+    events = list(tick_agent(agent, world, [agent], {1: _colony()},
+                             phase='day', rng=random.Random(0)))
     assert isinstance(events, list)
 
 
 def test_dead_agent_does_not_decay_or_move():
     # §9.16: tick_agent on a dead agent must be a no-op (not decay needs).
     world = _grass_world()
-    agent = Agent('Dead', 1, 1)
+    agent = Agent('Dead', 1, 1, colony_id=1)
     agent.alive = False
     agent.hunger = 50.0
-    events = list(tick_agent(agent, world, [agent], rng=random.Random(0)))
+    events = list(tick_agent(agent, world, [agent], {1: _colony()},
+                             phase='day', rng=random.Random(0)))
     assert agent.hunger == 50.0
     assert agent.x == 1 and agent.y == 1
 
@@ -41,10 +53,11 @@ def test_zero_health_triggers_death_before_decay():
     # §9.16: an agent that enters the tick with health <= 0 dies immediately,
     # without another round of needs decay.
     world = _grass_world()
-    agent = Agent('Doomed', 1, 1)
+    agent = Agent('Doomed', 1, 1, colony_id=1)
     agent.health = 0.0
     agent.hunger = 50.0
-    events = list(tick_agent(agent, world, [agent], rng=random.Random(0)))
+    events = list(tick_agent(agent, world, [agent], {1: _colony()},
+                             phase='day', rng=random.Random(0)))
     assert agent.alive is False
     assert agent.hunger == 50.0
     assert any(e['type'] == 'died' for e in events)
@@ -53,9 +66,9 @@ def test_zero_health_triggers_death_before_decay():
 def test_rng_is_required_kwonly():
     # §9.15: no `rng` kwarg → TypeError, not silent fallback to global random.
     world = _grass_world()
-    agent = Agent('Alice', 1, 1)
+    agent = Agent('Alice', 1, 1, colony_id=1)
     with pytest.raises(TypeError):
-        list(tick_agent(agent, world, [agent]))
+        list(tick_agent(agent, world, [agent], {1: _colony()}, phase='day'))
 
 
 # decide_action — full decision-tree branch coverage.
@@ -80,7 +93,7 @@ def test_decide_action_critical_health_low_energy_picks_rest():
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL - 1
     a.energy = needs.ENERGY_CRITICAL - 1
-    assert decide_action(a) == 'rest'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'rest'
 
 
 def test_decide_action_critical_health_ok_energy_picks_forage():
@@ -88,38 +101,44 @@ def test_decide_action_critical_health_ok_energy_picks_forage():
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL - 1
     a.energy = needs.NEED_MAX
-    assert decide_action(a) == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_critical_hunger_picks_forage():
     a = _healthy_agent()
     a.hunger = needs.HUNGER_CRITICAL - 1
-    assert decide_action(a) == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_critical_energy_picks_rest_when_hunger_ok():
     # Health + hunger ok → energy drives the decision.
     a = _healthy_agent()
     a.energy = needs.ENERGY_CRITICAL - 1
-    assert decide_action(a) == 'rest'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'rest'
 
 
 def test_decide_action_moderate_hunger_picks_forage():
     # Hunger between CRITICAL and MODERATE → forage early, don't wait for crisis.
     a = _healthy_agent()
     a.hunger = needs.HUNGER_MODERATE - 1
-    assert decide_action(a) == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_low_social_picks_socialise():
+    # New chain only returns 'socialise' from the at-camp opportunistic branch
+    # (off-camp + low social returns 'step_to_camp' instead). Position the
+    # agent on the camp tile and use a colony whose camp matches.
     a = _healthy_agent()
+    a.x, a.y = 0, 0
     a.social = needs.SOCIAL_LOW - 1
-    assert decide_action(a) == 'socialise'
+    camp_colony = EngineColony(id=1, name='Camp', color='#000', camp_x=0, camp_y=0,
+                                food_stock=18, growing_count=config.MAX_FIELDS_PER_COLONY)
+    assert decide_action(a, _grass_world(), camp_colony, 'day').action == 'socialise'
 
 
 def test_decide_action_all_ok_picks_explore():
     a = _healthy_agent()
-    assert decide_action(a) == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 # Boundary tests — the ladder uses strict `<`, so exact-threshold values
@@ -131,27 +150,27 @@ def test_decide_action_hunger_at_critical_threshold_does_not_pick_forage_yet():
     a = _healthy_agent()
     a.hunger = needs.HUNGER_CRITICAL
     # Still moderate because HUNGER_CRITICAL (20) < HUNGER_MODERATE (50).
-    assert decide_action(a) == 'forage'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'forage'
 
 
 def test_decide_action_hunger_at_moderate_threshold_skips_forage():
     # hunger == HUNGER_MODERATE → not strictly less than, falls past forage.
     a = _healthy_agent()
     a.hunger = needs.HUNGER_MODERATE
-    assert decide_action(a) == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 def test_decide_action_social_at_low_threshold_skips_socialise():
     a = _healthy_agent()
     a.social = needs.SOCIAL_LOW
-    assert decide_action(a) == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 def test_decide_action_health_at_critical_threshold_skips_emergency():
     # Exactly HEALTH_CRITICAL → emergency branch does not trigger.
     a = _healthy_agent()
     a.health = needs.HEALTH_CRITICAL
-    assert decide_action(a) == 'explore'
+    assert decide_action(a, _grass_world(), _colony(), 'day').action == 'explore'
 
 
 # Health recovery — fixes the "zombie" bug where health only ever decays.
@@ -226,11 +245,30 @@ def test_tick_agent_well_fed_rest_recovers_health_over_time():
     # should regain health over several ticks. This is the demo-visible
     # behaviour — the health bar moves back up, not just down.
     world = _grass_world()
-    a = Agent('Healer', 1, 1)
+    a = Agent('Healer', 1, 1, colony_id=1)
     a.health = 30.0
     a.hunger = needs.NEED_MAX
     a.energy = needs.ENERGY_CRITICAL - 1  # triggers rest branch
+    colonies = {1: _colony()}
     start = a.health
     for _ in range(10):
-        tick_agent(a, world, [a], rng=random.Random(0))
+        tick_agent(a, world, [a], colonies, phase='day', rng=random.Random(0))
     assert a.health > start
+
+
+def test_tick_agent_sets_last_decision_reason():
+    """Pre-tick: agent.last_decision_reason == '' (Agent.__init__ default).
+    Post-tick: non-empty and contains at least one known semantic token.
+    The token check is a sanity guard against a placeholder reason like
+    '???' or whitespace; exact-string equality is intentionally avoided
+    so future wording tweaks don't cascade (same anti-fragility argument
+    as test_decision_reason.py)."""
+    world = _grass_world()
+    a = Agent('Alice', 1, 1, colony_id=1)
+    assert a.last_decision_reason == ''          # pre-tick default
+    tick_agent(a, world, [a], {1: _colony()}, phase='day',
+               rng=random.Random(0))
+    assert a.last_decision_reason != ''          # now populated
+    # Reason should mention at least one semantic token the engine uses
+    assert any(token in a.last_decision_reason for token in
+               ('hunger', 'energy', 'social', 'cargo', 'explore', 'plant', 'forage'))

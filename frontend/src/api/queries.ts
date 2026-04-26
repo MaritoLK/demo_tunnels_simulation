@@ -20,6 +20,8 @@
 //
 // Mutations invalidate `['worldState']` — the one key all slices read
 // from — so create/step fire a single refetch instead of four.
+import { useEffect, useRef, useState } from 'react';
+
 import {
   keepPreviousData,
   useMutation,
@@ -29,6 +31,7 @@ import {
 } from '@tanstack/react-query';
 
 import { ApiError, apiGet, apiSend } from './client';
+import { connectWorldStream, type StreamStatus } from './stream';
 import type {
   Agent,
   Colony,
@@ -45,7 +48,9 @@ const WORLD_STATE_KEY = ['worldState'] as const;
 // the brief and, paired with the nginx 1s micro-cache (§9.27d; nginx
 // requires integer-second TTL), means roughly every second poll is a
 // cache hit — DB sees ~1 req/s/sim regardless of viewer count.
-const POLL_INTERVAL_MS = 500;
+// Exported so EventLog's filtered-events query reuses the same cadence;
+// drift between the two would be a tuning bug waiting to happen.
+export const POLL_INTERVAL_MS = 500;
 
 function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
@@ -205,4 +210,32 @@ export function useSimControl() {
       qc.invalidateQueries({ queryKey: WORLD_STATE_KEY });
     },
   });
+}
+
+/** Subscribe to the SSE stream. Returns latest snapshot + connection status.
+ *  When status flips to 'fallback', the caller should switch back to the
+ *  500 ms poll — useWorldState() continues to work regardless. */
+export function useWorldStream() {
+  const [snapshot, setSnapshot] = useState<WorldStateResponse | null>(null);
+  const [status, setStatus] = useState<StreamStatus>('connecting');
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    const conn = connectWorldStream<WorldStateResponse>({
+      url: '/api/v1/world/stream',
+      onMessage: (m) => {
+        if (mounted.current) setSnapshot(m);
+      },
+      onStatus: (s) => {
+        if (mounted.current) setStatus(s);
+      },
+    });
+    return () => {
+      mounted.current = false;
+      conn.close();
+    };
+  }, []);
+
+  return { snapshot, status };
 }

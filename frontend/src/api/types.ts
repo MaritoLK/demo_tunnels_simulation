@@ -2,6 +2,17 @@
 // Keep this file the single source of truth for the over-the-wire contract —
 // every other module importing Tile/Agent gets consistent types.
 
+// --- Wire-mirrored constants -------------------------------------------
+// Numeric constants whose canonical home is the backend; mirrored here so
+// UI code (cargo bars, phase progress, etc.) doesn't pluck literals at
+// every call site. If you change a backend value, update these too.
+
+// Maximum cargo per agent. Backend: backend/app/engine/needs.py CARRY_MAX.
+export const CARRY_MAX = 8;
+
+// Ticks per day/night phase. Backend: backend/app/engine/cycle.py TICKS_PER_PHASE.
+export const TICKS_PER_PHASE = 30;
+
 export type Terrain = 'grass' | 'water' | 'forest' | 'stone' | 'sand';
 export type ResourceType = 'food' | 'wood' | 'stone' | null;
 export type CropState = 'none' | 'growing' | 'mature';
@@ -50,6 +61,9 @@ export interface Agent {
   // Units of food in the agent's pouch (0..CARRY_MAX). Drained by
   // deposit at camp. Optional for legacy snapshots pre-cargo.
   cargo?: number;
+  // Engine's own one-line explanation of the last decide_action branch
+  // that fired for this agent. Empty string before the first tick.
+  decision_reason: string;
 }
 
 export interface Colony {
@@ -60,6 +74,10 @@ export interface Colony {
   camp_y: number;
   food_stock: number;
   growing_count: number;
+  // Sprite-asset key — decouples agent sprite selection from colony.name
+  // so a future colony rename doesn't lose its visual identity.
+  // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).
+  sprite_palette: string;
 }
 
 export interface SimulationSummary {
@@ -73,6 +91,8 @@ export interface SimulationSummary {
   speed: number;
   day: number;
   phase: Phase;
+  server_time_ms: number;
+  tick_ms: number;
 }
 
 // Composite polling response — one round-trip replaces the four separate

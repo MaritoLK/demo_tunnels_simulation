@@ -17,6 +17,7 @@ class Agent(db.Model):
     health = db.Column(db.Float, nullable=False, default=100.0, server_default='100.0')
     age = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     alive = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    cargo = db.Column(db.Float, nullable=False, default=0.0, server_default='0.0')
     colony_id = db.Column(
         db.Integer,
         db.ForeignKey('colonies.id', ondelete='SET NULL'),

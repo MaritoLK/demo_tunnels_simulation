@@ -147,7 +147,7 @@ def test_day_at_camp_with_cargo_returns_deposit():
     a.energy = 90
     a.social = 90
     a.health = 90
-    action_name = decide_action(a, world=w, colony=c, phase='day')
+    action_name = decide_action(a, world=w, colony=c, phase='day').action
     assert action_name == 'deposit'
 
 
@@ -167,7 +167,7 @@ def test_day_full_cargo_non_rogue_returns_home_to_deposit():
     a.energy = 90
     a.social = 90
     a.health = 90
-    action_name = decide_action(a, world=w, colony=c, phase='day')
+    action_name = decide_action(a, world=w, colony=c, phase='day').action
     assert action_name == 'step_to_camp'
 
 
@@ -183,7 +183,7 @@ def test_day_full_cargo_rogue_does_not_force_return():
     a.energy = 90
     a.social = 90
     a.health = 90
-    action_name = decide_action(a, world=w, colony=c, phase='day')
+    action_name = decide_action(a, world=w, colony=c, phase='day').action
     assert action_name != 'step_to_camp'
 
 
@@ -199,6 +199,6 @@ def test_day_partial_cargo_off_camp_does_not_force_return():
     a.energy = 90
     a.social = 90
     a.health = 90
-    action_name = decide_action(a, world=w, colony=c, phase='day')
+    action_name = decide_action(a, world=w, colony=c, phase='day').action
     assert action_name != 'step_to_camp'
     assert action_name == 'plant'

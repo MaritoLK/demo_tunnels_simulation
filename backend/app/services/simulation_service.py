@@ -13,6 +13,8 @@ restarts the state is re-loaded from DB on demand — the `snapshot_rng_state`
 bridge in `engine.simulation` preserves the §9.11 reproducibility contract
 across process boundaries.
 """
+import time as _time
+
 from sqlalchemy import tuple_
 
 from app import db, models
@@ -20,16 +22,26 @@ from app.engine.simulation import Simulation, new_simulation
 from app.engine import config as engine_config, cycle
 from app.engine.colony import EngineColony
 
-from . import mappers
+from . import mappers, sim_lock
 from .exceptions import SimulationNotFoundError
 
 
+# Single-process assumption. Drift possible if migrate + flask containers run
+# simultaneously (compose restart race). Re-evaluate for multi-worker.
 _current_sim = None
+
+_last_tick_ms: int = 0  # monotonic ms at which the most recent tick completed
 
 # One request cannot hold a transaction open for a million ticks. Cap the
 # per-call advance at MAX_TICKS_PER_STEP; the route layer rejects larger
 # values with 400 before they reach the service, this is defence-in-depth.
 MAX_TICKS_PER_STEP = 1000
+
+# Maximum colonies per simulation. Source of truth for both the route
+# layer's input cap and the service's camp-position guard. Bound to the
+# four corners supported by `_default_camp_positions` and the four
+# entries in DEFAULT_COLONY_PALETTE — keep all three in sync.
+MAX_COLONIES = 4
 
 
 def get_current_simulation():
@@ -97,18 +109,48 @@ def _reset_cache():
     _current_sim = None
 
 
+def _monotonic_ms() -> int:
+    """Monotonic clock in integer milliseconds. Safe for cross-tick
+    deltas — `time.monotonic()` is guaranteed non-decreasing across
+    calls in one process. We coerce to int so the wire shape is
+    trivially JSON-serializable without float precision surprises."""
+    return int(_time.monotonic() * 1000)
+
+
+def time_snapshot() -> dict:
+    """Wall-clock fields the wire summary needs, captured atomically.
+
+    Returns `{server_time_ms, tick_ms}`:
+      * server_time_ms — monotonic now.
+      * tick_ms        — monotonic instant at which the most recent
+                         tick committed; falls back to now if no tick
+                         has run yet (fresh sim, post-restart pre-tick).
+
+    Reads `_last_tick_ms` *before* `_monotonic_ms()` so a concurrent
+    tick committing between the two reads can't lift tick_ms past
+    server_time_ms. The captured last_tick is always ≤ the now that
+    follows it (monotonic clock + assignment ordering).
+    """
+    last_tick = _last_tick_ms
+    now = _monotonic_ms()
+    return {
+        'server_time_ms': now,
+        'tick_ms': last_tick or now,
+    }
+
+
 DEFAULT_COLONY_PALETTE = [
-    ('Red',    '#e74c3c'),
-    ('Blue',   '#3498db'),
-    ('Purple', '#9b59b6'),
-    ('Yellow', '#f1c40f'),
+    ('Red',    '#e74c3c', 'Red'),
+    ('Blue',   '#3498db', 'Blue'),
+    ('Purple', '#9b59b6', 'Purple'),
+    ('Yellow', '#f1c40f', 'Yellow'),
 ]
 
 
 def _default_camp_positions(width, height, n_colonies):
-    """Corner camps inset 3 tiles. Supports 1..4 colonies; raises for more."""
-    if n_colonies > 4:
-        raise ValueError(f'colonies={n_colonies} exceeds supported 4')
+    """Corner camps inset 3 tiles. Supports 1..MAX_COLONIES; raises for more."""
+    if n_colonies > MAX_COLONIES:
+        raise ValueError(f'colonies={n_colonies} exceeds supported {MAX_COLONIES}')
     corners = [(3, 3), (width - 4, 3), (3, height - 4), (width - 4, height - 4)]
     return corners[:n_colonies]
 
@@ -117,93 +159,99 @@ def _build_default_colonies(width, height, n_colonies):
     positions = _default_camp_positions(width, height, n_colonies)
     palette = DEFAULT_COLONY_PALETTE[:n_colonies]
     out = []
-    for (name, color), (cx, cy) in zip(palette, positions):
+    for (name, color, sprite_palette), (cx, cy) in zip(palette, positions):
         out.append(EngineColony(
             id=None, name=name, color=color,
             camp_x=cx, camp_y=cy,
             food_stock=engine_config.INITIAL_FOOD_STOCK,
+            sprite_palette=sprite_palette,
         ))
     return out
 
 
 def create_simulation(width, height, seed=None, agent_count=0,
                       colonies=0, agents_per_colony=None):
-    """Create a fresh sim. Two calling paths:
-      * Legacy:   agent_count=N (pre-cultivation, no colony system).
-      * Colonies: colonies=K + agents_per_colony=M (default demo path).
-    Default kwargs keep every existing caller on the legacy path; T22
-    wires the route to opt in explicitly.
+    """Create a fresh sim. Two calling shapes:
+      * Random spawn: agent_count=N — drops N agents on random walkable
+        tiles under a synthesized default colony. Test-friendly shorthand.
+      * Colonies: colonies=K + agents_per_colony=M — explicit camp layout
+        (default demo path).
     """
     global _current_sim
 
     # Colony kwargs travel as a pair. Half-set previously fell silently to
-    # the legacy branch after already flushing Colony rows — loud at the
-    # seam instead (mirrors the engine-layer guard in new_simulation).
+    # the random-spawn branch after already flushing Colony rows — loud at
+    # the seam instead (mirrors the engine-layer guard in new_simulation).
     if bool(colonies) != (agents_per_colony is not None):
         raise ValueError(
             'colonies and agents_per_colony must be passed together; '
             f'got colonies={colonies!r}, agents_per_colony={agents_per_colony!r}'
         )
 
-    try:
-        db.session.query(models.Event).delete()
-        db.session.query(models.Agent).delete()
-        db.session.query(models.WorldTile).delete()
-        db.session.query(models.Colony).delete()
-        db.session.query(models.SimulationState).delete()
-        db.session.flush()
-
-        if colonies and agents_per_colony is not None:
-            engine_colonies = _build_default_colonies(width, height, colonies)
-            colony_rows = [mappers.colony_to_row(c) for c in engine_colonies]
-            db.session.add_all(colony_rows)
+    with sim_lock.write():
+        try:
+            # Delete order matters: each row references the next via FK
+            # (events → agents → colonies; world_tiles → colonies). Reverse
+            # order would FK-violate. SimulationState is parentless, last
+            # is fine.
+            db.session.query(models.Event).delete()
+            db.session.query(models.Agent).delete()
+            db.session.query(models.WorldTile).delete()
+            db.session.query(models.Colony).delete()
+            db.session.query(models.SimulationState).delete()
             db.session.flush()
-            for c, row in zip(engine_colonies, colony_rows):
-                c.id = row.id
 
-            sim = new_simulation(
-                width, height, seed=seed,
-                colonies=engine_colonies,
-                agents_per_colony=agents_per_colony,
+            if colonies and agents_per_colony is not None:
+                engine_colonies = _build_default_colonies(width, height, colonies)
+                colony_rows = [mappers.colony_to_row(c) for c in engine_colonies]
+                db.session.add_all(colony_rows)
+                db.session.flush()
+                for c, row in zip(engine_colonies, colony_rows):
+                    c.id = row.id
+
+                sim = new_simulation(
+                    width, height, seed=seed,
+                    colonies=engine_colonies,
+                    agents_per_colony=agents_per_colony,
+                )
+            else:
+                sim = new_simulation(
+                    width, height, seed=seed,
+                    agent_count=agent_count,
+                )
+
+            # Demo bootstrap: skip the opening dawn window so press-play starts
+            # in the 'day' phase. Without this, a fresh sim spends the first
+            # TICKS_PER_PHASE ticks on eat/rest/step-to-camp routines — visually
+            # sleepy for an interview demo. Engine tests that construct their
+            # own Simulation directly are untouched (this offset lives at the
+            # service seam, not in engine.simulation).
+            sim.current_tick = cycle.TICKS_PER_PHASE
+
+            tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
+            db.session.add_all(tile_rows)
+
+            agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
+            db.session.add_all(agent_rows)
+            db.session.flush()
+            for agent, row in zip(sim.agents, agent_rows):
+                agent.id = row.id
+
+            state = models.SimulationState(
+                current_tick=sim.current_tick,
+                running=False, speed=1.0,
+                world_width=width, world_height=height,
+                seed=seed,
+                **_rng_state_columns(sim),
             )
-        else:
-            sim = new_simulation(
-                width, height, seed=seed,
-                agent_count=agent_count,
-            )
+            db.session.add(state)
 
-        # Demo bootstrap: skip the opening dawn window so press-play starts
-        # in the 'day' phase. Without this, a fresh sim spends the first
-        # TICKS_PER_PHASE ticks on eat/rest/step-to-camp routines — visually
-        # sleepy for an interview demo. Engine tests that construct their
-        # own Simulation directly are untouched (this offset lives at the
-        # service seam, not in engine.simulation).
-        sim.current_tick = cycle.TICKS_PER_PHASE
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
-        tile_rows = [mappers.tile_to_row(t) for row in sim.world.tiles for t in row]
-        db.session.add_all(tile_rows)
-
-        agent_rows = [mappers.agent_to_row(a) for a in sim.agents]
-        db.session.add_all(agent_rows)
-        db.session.flush()
-        for agent, row in zip(sim.agents, agent_rows):
-            agent.id = row.id
-
-        state = models.SimulationState(
-            current_tick=sim.current_tick,
-            running=False, speed=1.0,
-            world_width=width, world_height=height,
-            seed=seed,
-            **_rng_state_columns(sim),
-        )
-        db.session.add(state)
-
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
-
-    _current_sim = sim
+        _current_sim = sim
     return sim
 
 
@@ -225,43 +273,46 @@ def step_simulation(ticks=1):
         raise ValueError(
             f'ticks={ticks} exceeds MAX_TICKS_PER_STEP={MAX_TICKS_PER_STEP}'
         )
-    sim = get_current_simulation()
-    try:
-        events = sim.run(ticks)
+    with sim_lock.read():
+        sim = get_current_simulation()
+        try:
+            events = sim.run(ticks)
 
-        event_rows = [mappers.event_to_row(e) for e in events]
-        db.session.add_all(event_rows)
+            event_rows = [mappers.event_to_row(e) for e in events]
+            db.session.add_all(event_rows)
 
-        dirty_tile_coords = {
-            (e['data']['tile_x'], e['data']['tile_y'])
-            for e in events
-            if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
-        }
-        if dirty_tile_coords:
-            _update_dirty_tiles(sim, dirty_tile_coords)
+            dirty_tile_coords = {
+                (e['data']['tile_x'], e['data']['tile_y'])
+                for e in events
+                if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
+            }
+            if dirty_tile_coords:
+                _update_dirty_tiles(sim, dirty_tile_coords)
 
-        dirty_colony_ids = {
-            e['data']['colony_id']
-            for e in events
-            if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
-        }
-        if dirty_colony_ids:
-            _update_dirty_colonies(sim, dirty_colony_ids)
+            dirty_colony_ids = {
+                e['data']['colony_id']
+                for e in events
+                if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
+            }
+            if dirty_colony_ids:
+                _update_dirty_colonies(sim, dirty_colony_ids)
 
-        _update_agents(sim)
+            _update_agents(sim)
 
-        state = _load_state_row()
-        state.current_tick = sim.current_tick
-        rng_cols = _rng_state_columns(sim)
-        state.rng_spawn_state = rng_cols['rng_spawn_state']
-        state.rng_tick_state = rng_cols['rng_tick_state']
+            state = _load_state_row()
+            state.current_tick = sim.current_tick
+            rng_cols = _rng_state_columns(sim)
+            state.rng_spawn_state = rng_cols['rng_spawn_state']
+            state.rng_tick_state = rng_cols['rng_tick_state']
 
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
+            db.session.commit()
+            global _last_tick_ms
+            _last_tick_ms = _monotonic_ms()
+        except Exception:
+            db.session.rollback()
+            raise
 
-    return events
+        return events
 
 
 def load_current_simulation():

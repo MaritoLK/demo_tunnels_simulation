@@ -1,5 +1,18 @@
 """Runtime Agent and per-tick driver. Pure Python — no Flask, no DB imports."""
-from . import actions, needs
+from dataclasses import dataclass
+
+from . import actions, config, needs
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """Result of a decision tick. `action` is the action-name the engine
+    picked; `reason` is a short human-readable explanation of which
+    branch of the priority ladder fired. Both come from one ladder walk
+    inside decide_action — never two ladder walks (i.e. don't grow a
+    parallel reason_for() function; see CLAUDE.md §Design principles)."""
+    action: str
+    reason: str
 
 
 class Agent:
@@ -11,6 +24,7 @@ class Agent:
         'move_cooldown',
         'rogue', 'loner',
         'cargo',
+        'last_decision_reason',
     )
 
     def __init__(self, name, x, y, agent_id=None, colony_id=None):
@@ -49,135 +63,104 @@ class Agent:
         # feed the agent's own hunger — that's the foraging side-effect
         # that already fills hunger during the gather action.
         self.cargo = 0.0
+        # Populated per tick by tick_agent after decide_action. Empty string
+        # before the first tick so serializer + UI can treat absence as
+        # "no decision yet" without special-casing None.
+        self.last_decision_reason = ''
 
     def __repr__(self):
         return f"Agent({self.name}@{self.x},{self.y},state={self.state})"
 
 
-def decide_action(agent, world=None, colony=None, phase=None):
-    """Return the name of the action this agent should take this tick.
+def decide_action(agent, world, colony, phase) -> Decision:
+    """Return the Decision (action-name + reason) for this agent this tick.
 
-    Philosophy: agents live in the world, not at camp. The only reasons
-    a non-rogue returns home are (a) social need hit SOCIAL_LOW (only
-    camp socialise refills it) or (b) a dawn opportunistic eat_camp
-    when they happen to already be there. Everything else — foraging,
-    harvesting, planting, exploring — happens in the field. Previously
-    the dusk/night phases forced a march home where agents sat resting
-    for ~60 ticks doing nothing; the demo reads flatter than it should.
+    Priority ladder (first match wins):
+      1. Survival (health / hunger / energy crits).
+      2. Night → rest_outdoors in place.
+      3. At-camp opportunistic (deposit / eat / socialise).
+      4. Social-low off-camp → step_to_camp.
+      5. Cargo-full off-camp → step_to_camp.
+      6. Tile-local (harvest / plant).
+      7. Rogue eat-from-pouch.
+      8. Tail (forage / explore).
 
-    Order of precedence:
-      1. Survival (health/hunger/energy crit) — always applies.
-      2. Night: rest_outdoors in place (no travel home).
-      3. At-camp opportunistic: drop cargo, eat at dawn if hungry.
-      4. Social-low (non-rogue) → step_to_camp (the only forced return).
-      5. Rogue eat-from-pouch at hunger < MODERATE (they can't eat at camp).
-      6. Tile-local productivity (harvest / plant).
-      7. Tail: forage → explore.
+    Design notes — why this shape:
+      * Agents live in the world, not at camp. The only forced returns
+        home are social pressure (only at-camp socialise refills it) and
+        a full cargo (so colonists eventually deposit instead of stranding
+        their pouch in the field).
+      * Night is rest-in-place, not march-home — the prior dusk/night
+        forced-march loop ate ~60 ticks of demo time on idle pawns.
+      * Rogue agents skip the camp branches entirely; their social need
+        floor is permanent so step-to-camp would be busywork.
 
-    Legacy single-arg callers (pre-cultivation sims, audit scripts) hit
-    the `colony is None` path and get the classic chain. This preserves
-    backwards compat while T11/T12 finish wiring phase + colony through.
+    Every branch returns one Decision literal so action + reason cannot
+    drift. See CLAUDE.md §Design principles and the spec's
+    §Single-source-of-truth section for the full reason-string table.
     """
-    from . import config
+    hc = int(needs.HEALTH_CRITICAL)
+    ec = int(needs.ENERGY_CRITICAL)
+    hu_c = int(needs.HUNGER_CRITICAL)
+    hu_m = int(needs.HUNGER_MODERATE)
+    sl = int(needs.SOCIAL_LOW)
 
-    if colony is None:
-        return _legacy_decide_action(agent)
-    if world is None:
-        # Defensive guard: new path requires world. Fall back to legacy
-        # chain rather than NPE-ing on world.get_tile in the 'day' branch.
-        return _legacy_decide_action(agent)
-
-    # Survival takes precedence over any phase behavior.
+    # 1. Survival
     if agent.health < needs.HEALTH_CRITICAL:
-        return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
+        if agent.energy < needs.ENERGY_CRITICAL:
+            return Decision('rest', f'health < {hc}, energy < {ec} → rest')
+        return Decision('forage', f'health < {hc} → forage to recover')
     if agent.hunger < needs.HUNGER_CRITICAL:
-        return 'forage'
+        return Decision('forage', f'hunger < {hu_c} → forage now')
     if agent.energy < needs.ENERGY_CRITICAL:
-        return 'rest'
+        return Decision('rest', f'energy < {ec} → rest')
 
-    rogue = getattr(agent, 'rogue', False)
-    cargo = getattr(agent, 'cargo', 0.0)
-    at_camp = colony.is_at_camp(agent.x, agent.y) if not rogue else False
+    at_camp = colony.is_at_camp(agent.x, agent.y) if not agent.rogue else False
 
-    # Night: everybody sleeps where they stand. No forced march home.
-    # rest_outdoors recovers energy at half-rate, which keeps a natural
-    # cost for being caught in the field — but the agent still acts,
-    # doesn't trigger the old "traipse home, then rest 60 ticks" loop.
+    # 2. Night
     if phase == 'night':
-        return 'rest_outdoors'
+        return Decision('rest_outdoors', 'night phase → rest in place')
 
-    # At-camp opportunistic actions: if the agent happens to already be
-    # on their camp tile (typically because social pulled them home),
-    # spend the tick usefully before leaving again. Deposit first, eat
-    # at dawn if hungry, socialise if social is the reason they came.
+    # 3. At-camp opportunistic
     if at_camp:
-        if cargo > 0:
-            return 'deposit'
+        if agent.cargo > 0:
+            return Decision('deposit', f'at camp, cargo {agent.cargo:.1f} → deposit')
         if (phase == 'dawn'
                 and agent.hunger < needs.NEED_MAX
                 and colony.food_stock >= config.EAT_COST
                 and not agent.ate_this_dawn):
-            return 'eat_camp'
+            return Decision('eat_camp', 'dawn at camp → eat stock')
         if agent.social < needs.SOCIAL_LOW:
-            return 'socialise'
+            return Decision('socialise', f'at camp, social < {sl} → socialise')
 
-    # Social pressure — the only forced return home for a non-rogue.
-    # socialise() only refills on the camp tile with a colony-mate, so
-    # this branch is what keeps social→0→rogue from being inevitable.
-    # Rogue agents skip — their social will keep sliding, nothing to do.
-    if not rogue and agent.social < needs.SOCIAL_LOW:
-        return 'step_to_camp'
+    # 4. Social-low off-camp
+    if not agent.rogue and agent.social < needs.SOCIAL_LOW:
+        return Decision('step_to_camp', f'social < {sl} → head to camp')
 
-    # Full pouch — non-rogue can't forage any more and should offload.
-    # Without this branch a colonist who fills their cargo mid-field just
-    # wanders planting/exploring with no way to contribute; their pouch
-    # value sits stranded until social or dawn eventually pulls them home.
-    # Rogues have no camp so this rule doesn't apply to them — they'll
-    # spend cargo via eat_cargo further down the chain.
-    if not rogue and cargo >= needs.CARRY_MAX:
-        return 'step_to_camp'
+    # 5. Cargo-full off-camp
+    if not agent.rogue and agent.cargo >= needs.CARRY_MAX:
+        return Decision('step_to_camp', 'cargo full → head to camp')
 
+    # 6. Tile-local
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state == 'mature':
-        return 'harvest'
+        return Decision('harvest', 'mature crop → harvest')
     if (tile.crop_state == 'none'
             and tile.resource_amount == 0
             and colony.growing_count < config.MAX_FIELDS_PER_COLONY):
-        return 'plant'
+        return Decision('plant', 'empty tile → plant')
 
-    # Rogue eat-from-pouch: no camp → cargo is their larder. Trigger at
-    # HUNGER_MODERATE so they top up before starvation, and gate on
-    # cargo > 0 to avoid firing a sham eat with nothing in the pouch.
-    if rogue and cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
-        return 'eat_cargo'
+    # 7. Rogue eat-from-pouch
+    if agent.rogue and agent.cargo > 0 and agent.hunger < needs.HUNGER_MODERATE:
+        return Decision('eat_cargo', f'rogue, hunger < {hu_m} → eat from pouch')
 
+    # 8. Tail
     if agent.hunger < needs.HUNGER_MODERATE:
-        return 'forage'
-    # No social branch here: at-camp socialise is handled in the at_camp
-    # block above, and off-camp social-low already returned
-    # 'step_to_camp' earlier. Falling through means social is comfortable
-    # (or the agent is rogue, whose social floor is permanent).
-    return 'explore'
+        return Decision('forage', f'hunger < {hu_m} → forage')
+    return Decision('explore', 'all needs ok → explore')
 
 
-def _legacy_decide_action(agent):
-    """Pre-cultivation decision chain. Kept for legacy one-arg callers
-    (test_agent.py suite, audit/*.py scripts) until they migrate to the
-    new signature. Identical to the original body before T10."""
-    if agent.health < needs.HEALTH_CRITICAL:
-        return 'rest' if agent.energy < needs.ENERGY_CRITICAL else 'forage'
-    if agent.hunger < needs.HUNGER_CRITICAL:
-        return 'forage'
-    if agent.energy < needs.ENERGY_CRITICAL:
-        return 'rest'
-    if agent.hunger < needs.HUNGER_MODERATE:
-        return 'forage'
-    if agent.social < needs.SOCIAL_LOW:
-        return 'socialise'
-    return 'explore'
-
-
-def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
+def execute_action(action_name, agent, world, all_agents, colony, *, rng):
     if action_name == 'forage':
         return actions.forage(agent, world, rng=rng)
     if action_name == 'rest':
@@ -207,14 +190,11 @@ def execute_action(action_name, agent, world, all_agents, colony=None, *, rng):
     return {'type': 'idled', 'description': f'{agent.name} did nothing'}
 
 
-def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng):
+def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
     """Advance one tick for `agent`.
 
     `colonies_by_id` is a dict {colony_id: EngineColony}. Indexing by
     agent.colony_id keeps lookup O(1). `phase` comes from cycle.phase_for.
-
-    Legacy callers that pass neither `colonies_by_id` nor `phase` fall back
-    to the original pre-cultivation behavior.
     """
     if not agent.alive:
         return []
@@ -230,12 +210,6 @@ def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng
         events.append(actions.die(agent))
         return events
 
-    # Legacy compat: if either colonies_by_id or phase is None, fall back
-    # to the original tick_agent body.
-    if colonies_by_id is None or phase is None:
-        return _legacy_tick_agent(agent, world, all_agents, rng=rng)
-
-    # New path: phase-aware behavior with colony lookup.
     # Dawn-eat flag is transient: cleared any tick that isn't in the dawn
     # window so next dawn's decide_action sees a fresh eligibility.
     if phase != 'dawn':
@@ -262,36 +236,18 @@ def tick_agent(agent, world, all_agents, colonies_by_id=None, *, phase=None, rng
         agent.age += 1
         return events
 
-    # Invariant: when the new path is live, every agent belongs to a colony
-    # in the map. A miss means a data-drift bug (stale colony_id, test setup
-    # gap). Fail loud — the legacy decide_action fallback would silently
-    # bypass phase gates (night→rest, dusk→step_to_camp, dawn→eat_camp).
+    # Every agent belongs to a colony in the map. A miss means a data-drift
+    # bug (stale colony_id, test setup gap). Fail loud at the lookup boundary
+    # rather than NPE-ing later in decide_action's at_camp / cargo / plant paths.
     colony = colonies_by_id.get(agent.colony_id)
     if colony is None:
         raise KeyError(
             f"Agent {agent.id!r} has colony_id={agent.colony_id!r} "
             f"not in colonies_by_id {list(colonies_by_id)!r}"
         )
-    action_name = decide_action(agent, world, colony, phase)
-    events.append(execute_action(action_name, agent, world, all_agents, colony, rng=rng))
-
-    agent.age += 1
-    return events
-
-
-def _legacy_tick_agent(agent, world, all_agents, *, rng):
-    """Pre-cultivation tick driver. Kept for legacy callers until migration
-    to the new phase-aware signature. Identical to the original body before T11."""
-    events = []
-
-    needs.decay_needs(agent)
-
-    if agent.health <= 0:
-        events.append(actions.die(agent))
-        return events
-
-    action_name = decide_action(agent)
-    events.append(execute_action(action_name, agent, world, all_agents, rng=rng))
+    decision = decide_action(agent, world, colony, phase)
+    agent.last_decision_reason = decision.reason
+    events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
 
     agent.age += 1
     return events

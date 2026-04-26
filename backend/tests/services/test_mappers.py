@@ -97,3 +97,87 @@ def test_rows_to_world_reassembles_out_of_order():
     assert world.get_tile(0, 1).terrain == 'stone'
     assert world.get_tile(1, 1).terrain == 'forest'
     assert world.get_tile(1, 1).resource_amount == 15.0
+
+
+def test_agent_to_dict_emits_decision_reason():
+    """The wire shape must carry last_decision_reason under the
+    decision_reason key. Frontend relies on this field being present
+    on every serialized agent (empty string is fine pre-tick)."""
+    from app.routes.serializers import agent_to_dict
+
+    a = EngineAgent('Alice', 1, 1)
+    a.last_decision_reason = 'hunger < 50 → forage'
+    dumped = agent_to_dict(a)
+    assert 'decision_reason' in dumped
+    assert dumped['decision_reason'] == 'hunger < 50 → forage'
+
+
+def test_agent_to_dict_decision_reason_empty_pre_tick():
+    from app.routes.serializers import agent_to_dict
+
+    a = EngineAgent('Bob', 2, 2)  # last_decision_reason defaults to ''
+    dumped = agent_to_dict(a)
+    assert dumped['decision_reason'] == ''
+
+
+def test_build_default_colonies_assigns_palette_per_position():
+    """The 4-colony demo spawn: each EngineColony built by
+    _build_default_colonies carries a sprite_palette matching its name.
+    Locks the DEFAULT_COLONY_PALETTE → _build_default_colonies → EngineColony
+    threading; manually constructing colonies in the test would only
+    re-prove EngineColony.__init__ stores what it's given."""
+    from app.services.simulation_service import _build_default_colonies
+
+    colonies = _build_default_colonies(width=20, height=20, n_colonies=4)
+    palettes = [c.sprite_palette for c in colonies]
+    assert palettes == ['Red', 'Blue', 'Purple', 'Yellow']
+    # Names parallel palettes for the demo palette (no rename has happened).
+    assert [c.name for c in colonies] == palettes
+
+
+def test_colony_mapper_round_trip_preserves_sprite_palette(db_session):
+    """EngineColony → row → EngineColony keeps sprite_palette intact."""
+    from app.services import mappers
+    from app.engine.colony import EngineColony
+
+    c = EngineColony(id=None, name='Red', color='#e74c3c',
+                     camp_x=3, camp_y=3, food_stock=18,
+                     sprite_palette='Red')
+    row = mappers.colony_to_row(c)
+    db_session.add(row)
+    db_session.flush()
+    restored = mappers.row_to_colony(row)
+    assert restored.sprite_palette == 'Red'
+    assert restored.name == 'Red'
+
+
+def test_colony_to_dict_emits_sprite_palette():
+    from app.engine.colony import EngineColony
+    from app.routes.serializers import colony_to_dict
+
+    c = EngineColony(id=1, name='Purple', color='#9b59b6',
+                     camp_x=0, camp_y=0, food_stock=10,
+                     sprite_palette='Purple')
+    dumped = colony_to_dict(c)
+    assert dumped['sprite_palette'] == 'Purple'
+
+
+def test_synthesized_default_colony_sprite_palette_is_blue():
+    """Simulation.__init__ with colonies=None synthesizes a default colony
+    whose sprite_palette resolves to 'Blue' — the renderer's fallback
+    contract. Note: this test asserts the *behavior* (default == 'Blue'),
+    not the *literal* `sprite_palette='Blue'` at the synthesis site —
+    EngineColony.__init__'s parameter default is also 'Blue', so a future
+    drop of the explicit kwarg would still pass this test. Keeping the
+    explicit kwarg is a code-style guarantee, not a behavioral one."""
+    from app.engine.simulation import Simulation
+    from app.engine.world import World, Tile
+
+    w = World(3, 3)
+    w.tiles = [
+        [Tile(x, y, 'grass') for x in range(3)]
+        for y in range(3)
+    ]
+    sim = Simulation(w)                                      # no colonies
+    default = next(iter(sim.colonies.values()))
+    assert default.sprite_palette == 'Blue'

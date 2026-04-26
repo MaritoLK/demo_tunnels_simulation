@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Canvas2DRenderer } from './Canvas2DRenderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Canvas2DRenderer, pickVariant } from './Canvas2DRenderer';
 import type { FrameSnapshot } from './Renderer';
 
 // Integration test: the renderer owns canvas 2D calls. We stub
@@ -97,6 +97,7 @@ function makeSnap(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
         state: 'idle',
         alive: true,
         colony_id: null,
+        decision_reason: '',
       },
     ],
     colonies: [],
@@ -182,7 +183,7 @@ describe('Canvas2DRenderer — colony decorations', () => {
     r.resize(32, 32);
     r.drawFrame(makeSnap({
       colonies: [
-        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0 },
+        { id: 1, name: 'Red', color: '#e74c3c', camp_x: 0, camp_y: 0, food_stock: 0, growing_count: 0, sprite_palette: 'Red' },
       ],
     }));
     expect(ctxSpy.strokeRect).toHaveBeenCalledTimes(1);
@@ -199,196 +200,27 @@ describe('Canvas2DRenderer — colony decorations', () => {
   });
 });
 
-describe('Canvas2DRenderer — tick interpolation', () => {
-  // Renderer owns the prev→curr interpolation state; FrameSnapshot
-  // only carries current integer positions + the scalar currentTick
-  // that tells the renderer when to rotate its history. These tests
-  // inspect the first `arc` call per frame — in the procedural
-  // fallback path (no sprite atlas loaded, as in jsdom) that's the
-  // agent body. Selection rings + gloss highlight come later in the
-  // call log, so `mock.calls[0]` is the body position.
-  let ctxSpy: CtxSpy;
-  let host: HTMLDivElement;
-  let nowSpy: ReturnType<typeof vi.spyOn>;
-  let now: number;
 
-  beforeEach(() => {
-    ctxSpy = makeCtxSpy();
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
-      () => ctxSpy as unknown as CanvasRenderingContext2D,
-    );
-    host = document.createElement('div');
-    document.body.appendChild(host);
-    now = 0;
-    nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+describe('pickVariant', () => {
+  const baseAgent = { state: 'exploring', x: 1, y: 1, cargo: 0 };
+
+  it('returns idle when stationary with no cargo', () => {
+    expect(pickVariant(baseAgent, { x: 1, y: 1 })).toBe('idle');
   });
 
-  afterEach(() => {
-    nowSpy.mockRestore();
+  it('returns idleMeat when stationary with cargo', () => {
+    expect(pickVariant({ ...baseAgent, cargo: 2 }, { x: 1, y: 1 })).toBe('idleMeat');
   });
 
-  function agentAt(id: number, x: number, y: number) {
-    return {
-      id, name: 'A', x, y, health: 100, hunger: 80, energy: 80, social: 80,
-      age: 0, state: 'idle', alive: true, colony_id: null,
-    };
-  }
-
-  function bodyXFromFirstArc(spy: CtxSpy, tilePx: number): number {
-    const call = spy.arc.mock.calls[0];
-    // arc(cx, cy, r, 0, 2π). Body centre is tilePx*bodyX + tilePx/2.
-    const cx = call[0] as number;
-    return (cx - tilePx / 2) / tilePx;
-  }
-
-  it('lerps the agent body between prev and curr over the poll window', () => {
-    const r = new Canvas2DRenderer();
-    r.mount(host);
-    r.resize(64, 32);
-    // Frame 1 at tick 0 establishes lastSeenPositions = (0,0).
-    now = 0;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 0, 0)],
-      selectedAgentId: null, // drop selection so the first arc is definitively the body
-      currentTick: 0,
-    }));
-    // Frame 2: tick advances, agent jumps 1 tile. alpha=0 → body still
-    // at (0,0). One full pollIntervalMs (500ms) between frames 1 and 2
-    // so the EMA sees a realistic delta and stays near its seed.
-    ctxSpy.arc.mockClear();
-    now = 500;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 1, 0)],
-      selectedAgentId: null,
-      currentTick: 1,
-    }));
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(0, 2);
-
-    // Frame 3: half the poll window in — alpha≈0.5, body at ~0.5.
-    ctxSpy.arc.mockClear();
-    now = 500 + 250; // pollIntervalMs settled at 500
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 1, 0)],
-      selectedAgentId: null,
-      currentTick: 1,
-    }));
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(0.5, 1);
-
-    r.dispose();
+  it('returns run when moving, no cargo', () => {
+    expect(pickVariant(baseAgent, { x: 0, y: 1 })).toBe('run');
   });
 
-  it('snaps to target when reducedMotion is true', () => {
-    const r = new Canvas2DRenderer();
-    r.mount(host);
-    r.resize(64, 32);
-    now = 0;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 0, 0)],
-      selectedAgentId: null,
-      currentTick: 0,
-      reducedMotion: true,
-    }));
-    ctxSpy.arc.mockClear();
-    now = 10;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 1, 0)],
-      selectedAgentId: null,
-      currentTick: 1,
-      reducedMotion: true,
-    }));
-    // reducedMotion = no lerp even at alpha=0 → body draws at target (x=1).
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(1, 2);
-    r.dispose();
+  it('returns runMeat when moving with cargo', () => {
+    expect(pickVariant({ ...baseAgent, cargo: 3 }, { x: 0, y: 1 })).toBe('runMeat');
   });
 
-  it('snaps when the agent moves more than one tile in a tick (no wall phasing)', () => {
-    const r = new Canvas2DRenderer();
-    r.mount(host);
-    r.resize(320, 32);
-    now = 0;
-    r.drawFrame(makeSnap({
-      width: 10, height: 1,
-      tiles: [Array.from({ length: 10 }, (_, i) => ({
-        x: i, y: 0, terrain: 'grass' as const, resource_type: null, resource_amount: 0,
-        crop_state: 'none' as const, crop_growth_ticks: 0, crop_colony_id: null,
-      }))],
-      agents: [agentAt(7, 0, 0)],
-      selectedAgentId: null,
-      currentTick: 0,
-    }));
-    ctxSpy.arc.mockClear();
-    now = 10;
-    r.drawFrame(makeSnap({
-      width: 10, height: 1,
-      tiles: [Array.from({ length: 10 }, (_, i) => ({
-        x: i, y: 0, terrain: 'grass' as const, resource_type: null, resource_amount: 0,
-        crop_state: 'none' as const, crop_growth_ticks: 0, crop_colony_id: null,
-      }))],
-      agents: [agentAt(7, 5, 0)], // jumped 5 tiles — teleport, not a walk
-      selectedAgentId: null,
-      currentTick: 1,
-    }));
-    // Distance² = 25 > 2 → snap. Body at target (x=5), not lerped through 1..4.
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(5, 2);
-    r.dispose();
-  });
-
-  it('new agents get prev=curr (no visible jump from origin)', () => {
-    const r = new Canvas2DRenderer();
-    r.mount(host);
-    r.resize(64, 32);
-    // Frame 1 — no agents yet.
-    now = 0;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [],
-      selectedAgentId: null,
-      currentTick: 0,
-    }));
-    ctxSpy.arc.mockClear();
-    // Frame 2 — tick advanced, new agent appears at (1, 0). No prev entry,
-    // so body draws at target instead of lerping from (0, 0) or stale data.
-    now = 10;
-    r.drawFrame(makeSnap({
-      width: 2, height: 1,
-      tiles: [[
-        { x: 0, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-        { x: 1, y: 0, terrain: 'grass', resource_type: null, resource_amount: 0, crop_state: 'none', crop_growth_ticks: 0, crop_colony_id: null },
-      ]],
-      agents: [agentAt(7, 1, 0)],
-      selectedAgentId: null,
-      currentTick: 1,
-    }));
-    expect(bodyXFromFirstArc(ctxSpy, 32)).toBeCloseTo(1, 2);
-    r.dispose();
+  it('returns idle when prev is undefined (first frame)', () => {
+    expect(pickVariant(baseAgent, undefined)).toBe('idle');
   });
 });

@@ -23,16 +23,28 @@
 //     we fall back to the procedural rect-based render so there's no
 //     blank flash and tests don't require asset files.
 import type { Renderer, FrameSnapshot } from './Renderer';
-import type { Terrain } from '../api/types';
+import { CARRY_MAX, type Terrain } from '../api/types';
 import {
   HOUSE_FRAME_H,
   HOUSE_FRAME_W,
   loadSprites,
+  PAWN_FRAME_PX,
   SOURCE_TILE_PX,
   TERRAIN_DECORATION,
   TERRAIN_TILE,
+  type ColonyPalette,
+  type PawnVariant,
   type SpriteAtlas,
 } from './spriteAtlas';
+import { FRAME_MS, FRAMES_PER_CYCLE, STATE_VISUALS } from './animConfig';
+import { InterpBuffer } from './interpBuffer';
+import { LifecycleFade } from './lifecycleFade';
+
+interface AnimState {
+  variant: PawnVariant;
+  frameIndex: number;
+  elapsedMs: number;
+}
 
 // Vivid WorldBox-inspired biome palette. Saturated, playful, reads as
 // "sandbox world" not "scientific map." The canvas is the hero — chrome
@@ -62,32 +74,28 @@ const RESOURCE_DOT_COLOUR: Record<string, string> = {
   stone: '#d0d0d8', // light stone
 };
 
-// Mirrors backend needs.CARRY_MAX. Used to scale the cargo pip's size
-// so a nearly-full pouch reads visibly bigger than a couple of units.
-const CARRY_MAX = 8;
-
-// Action label styling — one short word per engine state, each tinted
-// distinctly so you can read what the colony is doing at a glance
-// without hovering each agent. Keys MUST match backend actions.STATE_*
-// strings (wire contract). Dead agents get no label — the fade already
-// reads as "stopped."
-const STATE_LABEL: Record<string, { text: string; color: string }> = {
-  foraging:    { text: 'forage',  color: '#ff7b3b' }, // coral — matches food sprite
-  resting:     { text: 'rest',    color: '#6b9bd4' }, // sky blue — calm
-  socialising: { text: 'social',  color: '#d870c9' }, // magenta — warmth
-  exploring:   { text: 'explore', color: '#5cbd4a' }, // green — go
-  traversing:  { text: 'trek',    color: '#c08a4a' }, // tan — terrain drag
-  planting:    { text: 'plant',   color: '#7ee070' }, // bright green — matches growing dot
-  harvesting:  { text: 'harvest', color: '#ffd23f' }, // gold — matches mature dot
-  depositing:  { text: 'deposit', color: '#4ec9d4' }, // cyan — inflow
-  eating:      { text: 'eat',     color: '#ff6b8a' }, // pink-red — appetite
-  idle:        { text: 'idle',    color: '#8a8a93' }, // muted grey
-};
-
 // Below this tile size the label is unreadable and just adds clutter.
 // Matched to the food-badge threshold (≥14 CSS px) so both overlays
 // appear/disappear at the same zoom level.
 const LABEL_MIN_TILE_PX = 14;
+
+/**
+ * Pick the pawn animation variant for `agent`. Motion comes from
+ * position delta (not state string) — the engine's STATE_FORAGING
+ * is set both when gathering in place AND when stepping toward food,
+ * so a state-based motion check would lope motionless foragers.
+ */
+export function pickVariant(
+  agent: { state: string; cargo?: number; x: number; y: number },
+  prev: { x: number; y: number } | undefined,
+): PawnVariant {
+  const moving = prev !== undefined && (agent.x !== prev.x || agent.y !== prev.y);
+  const carrying = (agent.cargo ?? 0) > 0;
+  if (moving && carrying) return 'runMeat';
+  if (moving) return 'run';
+  if (carrying) return 'idleMeat';
+  return 'idle';
+}
 
 export class Canvas2DRenderer implements Renderer {
   private host: HTMLElement | null = null;
@@ -106,23 +114,22 @@ export class Canvas2DRenderer implements Renderer {
   // the procedural rect renderer (during load, on load failure, in
   // tests where the assets aren't bundled).
   private sprites: SpriteAtlas | null = null;
-  // Tick-interpolation state. All of it lives on the renderer because
-  // "how to fill the gap between two poll snapshots" is a rendering
-  // concern, not a simulation one — the engine only hands us integer
-  // tile positions.
-  //   prevPositions      — agent positions at the last tick boundary;
-  //                        lerped toward the snapshot's current position.
-  //   lastSeenPositions  — rolling shadow of positions seen on the
-  //                        most recent frame. Becomes prev on tick-advance.
-  //   lastSeenTick       — most recent tick we drew (-1 = never).
-  //   lastTickBoundaryAt — performance.now() when we last saw a tick advance.
-  //   pollIntervalMs     — EMA of inter-poll delta, seeded from the React
-  //                        Query poll interval. Controls lerp speed.
-  private prevPositions = new Map<number, { x: number; y: number }>();
-  private lastSeenPositions = new Map<number, { x: number; y: number }>();
-  private lastSeenTick = -1;
-  private lastTickBoundaryAt = 0;
-  private pollIntervalMs = 500;
+  // Interpolation + lifecycle state — delegated to purpose-built classes.
+  //   interpBuffer    — 2-snapshot ring; sampleAt(renderTimeMs) produces
+  //                     per-agent interpolated positions.
+  //   fade            — per-agent in/alive/out lifecycle, drives alpha.
+  //   lastFrameSample — positions produced by the most recent sampleAt call;
+  //                     used by the anim-state loop next frame to detect
+  //                     motion (run vs idle variant). Replaces prevPositions.
+  private interpBuffer = new InterpBuffer();
+  private fade = new LifecycleFade();
+  private lastFrameSample: Map<number, { x: number; y: number }> = new Map();
+  // Per-agent animation state — lazily created on first sight.
+  // Swept at end of each draw so departed/dead agents don't accumulate.
+  private animStates: Map<number, AnimState> = new Map();
+  // Wall-clock time of the previous drawFrame call — used to compute dt
+  // for frame-cycling. 0 on first frame (dt = 0, no advance).
+  private lastFrameAt = 0;
 
   mount(host: HTMLElement): void {
     this.host = host;
@@ -165,58 +172,62 @@ export class Canvas2DRenderer implements Renderer {
     this.ctx.imageSmoothingEnabled = false;
   }
 
+  /** Push a new server snapshot into the interpolation buffer.
+   *  Called by WorldCanvas whenever a stream or poll snapshot arrives. */
+  ingestSnapshot(snap: { serverTimeMs: number; tick: number; agents: Array<{ id: number; x: number; y: number }> }): void {
+    this.interpBuffer.push(snap);
+  }
+
   drawFrame(snap: FrameSnapshot): void {
     if (!this.canvas || !this.ctx) return;
     const { ctx } = this;
     const {
       width, height, tiles, agents, colonies, tilePx, cameraX, cameraY,
-      selectedAgentId, selectedTile, reducedMotion, currentTick,
+      selectedAgentId, selectedTile, reducedMotion,
     } = snap;
 
-    // Tick-advance bookkeeping for inter-poll interpolation. Runs
-    // before any drawing so the agent loop below can read a consistent
-    // (prevPositions, alpha) pair.
+    // Sample the interpolation buffer at render-time. The render time
+    // is server_time_ms - INTERP_DELAY_MS, which keeps renderTime between
+    // two known snapshots — always interpolating measured truths rather
+    // than extrapolating past the newest one.
     const now = performance.now();
-    const tickAdvanced = currentTick > this.lastSeenTick;
-    if (tickAdvanced && this.lastSeenTick >= 0) {
-      // Take the positions we drew last frame as the "prev" for this
-      // tick, then measure how long the previous tick window actually
-      // lasted so the lerp speed tracks real polling cadence.
-      this.prevPositions = new Map(this.lastSeenPositions);
-      const delta = now - this.lastTickBoundaryAt;
-      // Bound the EMA: a laptop that sleeps for a minute shouldn't
-      // pin the pollInterval at 60s. 3s covers 1 Hz sim speed with
-      // plenty of slack; anything longer is dropped from the EMA —
-      // pollIntervalMs keeps its last known value, not a reseed.
-      // Consequence after a long sleep: the stale value persists
-      // until the next sub-3s tick advance reseeds it. alpha clamps
-      // to [0, 1] so the user never sees bogus positions — worst
-      // case is one poll's worth of bodies pinned at target on wake,
-      // then normal interpolation resumes. Explicit reseed via Page
-      // Visibility listener considered and deferred: not observable
-      // in demo conditions, more surface than the symptom justifies.
-      if (delta > 0 && delta < 3000) {
-        this.pollIntervalMs = this.pollIntervalMs * 0.7 + delta * 0.3;
-      }
-      this.lastTickBoundaryAt = now;
-    } else if (this.lastSeenTick < 0) {
-      // Very first frame — no history, no animation to unwind.
-      this.lastTickBoundaryAt = now;
-    }
-    this.lastSeenTick = currentTick;
+    const INTERP_DELAY_MS = 100;
+    const sampleTimeMs = snap.serverNowMs != null
+      ? snap.serverNowMs - INTERP_DELAY_MS
+      : now - INTERP_DELAY_MS;
+    const sample = this.interpBuffer.sampleAt(sampleTimeMs);
 
-    // Prune dead/departed ids from both maps so there's no ghost draw
-    // on subsequent frames and no slow memory bloat.
+    // Present ids = whoever the buffer is producing a position for
+    // (includes departed-and-pinned). LifecycleFade decides fade state.
     const presentIds = new Set<number>();
-    for (const a of agents) presentIds.add(a.id);
-    for (const id of Array.from(this.lastSeenPositions.keys())) {
-      if (!presentIds.has(id)) this.lastSeenPositions.delete(id);
-    }
-    for (const id of Array.from(this.prevPositions.keys())) {
-      if (!presentIds.has(id)) this.prevPositions.delete(id);
-    }
+    for (const id of sample.positions.keys()) presentIds.add(id);
+    this.fade.update({ present: presentIds, now });
 
-    const alpha = Math.max(0, Math.min(1, (now - this.lastTickBoundaryAt) / this.pollIntervalMs));
+    // Frame-cycling: compute dt from wall-clock delta between drawFrame calls.
+    // dt = 0 on the very first frame (lastFrameAt = 0) so no phantom advance.
+    const dt = this.lastFrameAt > 0 ? now - this.lastFrameAt : 0;
+    this.lastFrameAt = now;
+
+    // Per-agent anim state — pick variant + advance frameIndex at 10 fps.
+    // Must run before the agent draw loop (below) which reads animStates.
+    for (const agent of agents) {
+      if (!agent.alive) continue;
+      const prev = this.lastFrameSample.get(agent.id);
+      const wantVariant = pickVariant(agent, prev);
+
+      let anim = this.animStates.get(agent.id);
+      if (!anim || anim.variant !== wantVariant) {
+        // New agent or variant change: reset to frame 0.
+        anim = { variant: wantVariant, frameIndex: 0, elapsedMs: 0 };
+        this.animStates.set(agent.id, anim);
+      } else {
+        anim.elapsedMs += dt;
+        while (anim.elapsedMs >= FRAME_MS) {
+          anim.frameIndex = (anim.frameIndex + 1) % FRAMES_PER_CYCLE;
+          anim.elapsedMs -= FRAME_MS;
+        }
+      }
+    }
 
     ctx.save();
     // Background clear — match the shell ground so the canvas feels
@@ -405,32 +416,25 @@ export class Canvas2DRenderer implements Renderer {
       ctx.restore();
     }
 
-    // Colony color lookup — O(1) per agent in the loop below. Built once
+    // Colony lookup — O(1) per agent in the loop below. Built once
     // per frame; colonies array is small (<=4) so this is negligible.
-    const colonyColorById = new Map<number, string>();
-    for (const c of colonies) colonyColorById.set(c.id, c.color);
+    // The full colony object is needed for both .color (existing) and
+    // .sprite_palette (Task 11 palette-aware pawn draw); a single map
+    // avoids two parallel `find` calls.
+    const colonyById = new Map<number, typeof colonies[number]>();
+    for (const c of colonies) colonyById.set(c.id, c);
 
     // Agent pass — rounded body with a subtle dark outline + glossy
     // highlight. Reads as little critter, not an abstract disc.
     for (const a of agents) {
-      // Body position = interpolated between prev (last tick boundary)
-      // and current (this tick's target). Halo + selection ring stay
-      // on the target tile so hit-tests match the visual anchor.
-      // Snap if the agent moved more than one tile in a single tick
-      // window (teleport, multi-step tick batch) — sliding them
-      // through intermediate tiles would look like they're phasing
-      // through walls, worse than a crisp cut.
-      const prev = this.prevPositions.get(a.id);
-      let bodyX = a.x;
-      let bodyY = a.y;
-      if (prev && !reducedMotion) {
-        const dx = a.x - prev.x;
-        const dy = a.y - prev.y;
-        if (dx * dx + dy * dy <= 2) {
-          bodyX = prev.x + dx * alpha;
-          bodyY = prev.y + dy * alpha;
-        }
-      }
+      // Body position: use InterpBuffer sample when motion is enabled.
+      // reducedMotion bypasses the buffer entirely — draw at the exact
+      // server-reported tile. LifecycleFade drives alpha (fade in/out).
+      const p = sample.positions.get(a.id);
+      const reducedBypass = reducedMotion;
+      const bodyX = reducedBypass ? a.x : (p?.x ?? a.x);
+      const bodyY = reducedBypass ? a.y : (p?.y ?? a.y);
+      const lifecycleAlpha = this.fade.alphaFor(a.id, now);
       const cx = bodyX * tilePx + tilePx / 2;
       const cy = bodyY * tilePx + tilePx / 2;
       const targetCx = a.x * tilePx + tilePx / 2;
@@ -469,32 +473,36 @@ export class Canvas2DRenderer implements Renderer {
       }
 
       if (sprites) {
-        // Tight crop on the pawn body inside the 192×192 frame. The
-        // body lives at roughly (46, 30)–(146, 160) in source pixels —
-        // the rest is animation-slack padding (head-bob + tool sweep
-        // room). Drawing the whole frame at 1.5×tile scaled the body
-        // down to 50% of the tile (visually invisible at fit-zoom).
-        // Render the tight crop at native aspect: 1 tile wide × 1.3
-        // tiles tall, foot anchored at tile bottom so only the head
-        // overshoots upward.
-        const srcX = 46, srcY = 30, srcW = 100, srcH = 130;
+        // Palette-aware per-variant per-frame pawn draw.
+        // Each pawn sheet is 1536×192 = 8 frames of PAWN_FRAME_PX×PAWN_FRAME_PX.
+        // The anim state was set for alive agents in the frame-cycling block above.
+        // Dead agents skip the anim state (not alive → not in animStates) so
+        // fall back to the colony palette's idle sheet at frame 0.
+        //
+        // Tight crop: body lives at roughly (46,30)–(146,160) in the 192×192 frame.
+        // Drawing the whole 192×192 at 1×tile leaves the body at 52% of tile width.
+        // Crop to (100×130) at the correct frame-horizontal offset so it fills 1 tile.
+        const colony = a.colony_id != null ? colonyById.get(a.colony_id) : undefined;
+        const palette = (colony?.sprite_palette as ColonyPalette | undefined) ?? 'Blue';
+        const palettePawns = sprites.pawns[palette] ?? sprites.pawns.Blue;
+        const anim = a.alive ? this.animStates.get(a.id) : undefined;
+        const variant: PawnVariant = anim?.variant ?? 'idle';
+        const sheet = palettePawns[variant];
+        const frameIndex = anim?.frameIndex ?? 0;
+        // Source: crop the body from the correct animation frame column.
+        // Within-frame body crop: (46, 30) to (146, 160) = 100×130 px.
+        const srcX = frameIndex * PAWN_FRAME_PX + 46;
+        const srcY = 30, srcW = 100, srcH = 130;
         const pawnW = tilePx;
         const pawnH = tilePx * (srcH / srcW);
         const pawnX = cx - pawnW / 2;
         const pawnY = cy + tilePx * 0.5 - pawnH;
-        if (!a.alive) {
-          ctx.save();
-          ctx.globalAlpha = 0.35;
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-          ctx.restore();
-        } else if (traversing) {
-          ctx.save();
-          ctx.globalAlpha = 0.75;
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-          ctx.restore();
-        } else {
-          ctx.drawImage(sprites.pawn, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
-        }
+        ctx.save();
+        if (!a.alive) ctx.globalAlpha = 0.35 * lifecycleAlpha;
+        else if (traversing) ctx.globalAlpha = 0.75 * lifecycleAlpha;
+        else ctx.globalAlpha = lifecycleAlpha;
+        ctx.drawImage(sheet, srcX, srcY, srcW, srcH, pawnX, pawnY, pawnW, pawnH);
+        ctx.restore();
       } else {
         // Procedural fallback body + outline + gloss highlight.
         ctx.fillStyle = a.alive ? healthColour(a.health) : '#3a3f55';
@@ -511,6 +519,14 @@ export class Canvas2DRenderer implements Renderer {
         ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.35, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      // State icon overlay — small glyph above the pawn. Skip when state's
+      // glyph is empty (default for 'idle' = nothing to say). Phase = current
+      // day/night phase from snap; falls back to 'day' if missing.
+      const pawnTopY = sprites && a.alive
+        ? cy + tilePx * 0.5 - tilePx * (130 / 100)  // sprite path pawnY
+        : cy - r;  // procedural path approximate top
+      this._drawStateIcon(ctx, a.state, cx, pawnTopY, snap.phase ?? 'day');
 
       // Cargo pip — small brown satchel at top-right of the pawn when
       // the agent is carrying anything. Radius scales with fullness
@@ -537,7 +553,7 @@ export class Canvas2DRenderer implements Renderer {
       // small and high so it doesn't fight the body silhouette.
       // Rogue agents: broken-dash ring in a desaturated tone — they've
       // lost their colony tie, so the visual should too.
-      const colonyColor = a.colony_id != null ? colonyColorById.get(a.colony_id) : undefined;
+      const colonyColor = a.colony_id != null ? colonyById.get(a.colony_id)?.color : undefined;
       if (colonyColor) {
         ctx.save();
         if (a.rogue) {
@@ -560,8 +576,8 @@ export class Canvas2DRenderer implements Renderer {
       // the pawn sprite itself all compete for contrast). Skip dead
       // agents (their fade already says "stopped") and skip when the
       // tile is too small to render a readable glyph.
-      const meta = a.alive ? STATE_LABEL[a.state] : undefined;
-      if (meta && tilePx >= LABEL_MIN_TILE_PX) {
+      const meta = a.alive ? STATE_VISUALS[a.state] : undefined;
+      if (meta?.label && meta.color && tilePx >= LABEL_MIN_TILE_PX) {
         // Anchor above the colony halo: halo sits at cy - r*0.4 with
         // radius r*0.55, so its top is cy - 0.95*r. Labels at cy - 1.4*r
         // clear the halo by ~0.45r and don't collide with the cargo pip
@@ -573,9 +589,9 @@ export class Canvas2DRenderer implements Renderer {
         const labelY = cy - r * 1.4;
         ctx.lineWidth = Math.max(2, tilePx * 0.09);
         ctx.strokeStyle = 'rgba(10,12,18,0.85)';
-        ctx.strokeText(meta.text, cx, labelY);
+        ctx.strokeText(meta.label, cx, labelY);
         ctx.fillStyle = meta.color;
-        ctx.fillText(meta.text, cx, labelY);
+        ctx.fillText(meta.label, cx, labelY);
       }
 
       if (a.id === selectedAgentId) {
@@ -639,10 +655,22 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
-    // Fold the frame's positions into the rolling shadow map — next
-    // tick-advance turns this into prevPositions.
-    for (const a of agents) {
-      this.lastSeenPositions.set(a.id, { x: a.x, y: a.y });
+    // Snapshot the interpolated positions so next frame's anim-state loop
+    // can detect motion (run vs idle variant) via lastFrameSample.
+    this.lastFrameSample.clear();
+    for (const [id, pos] of sample.positions) {
+      this.lastFrameSample.set(id, { x: pos.x, y: pos.y });
+    }
+
+    // Sweep departed agents from animStates to prevent unbounded growth.
+    // Includes corpses still in the snapshot (agent.alive==false) — but
+    // those never entered animStates anyway (anim-advance loop skips dead),
+    // so the delete on a present-but-corpse id is a harmless no-op.
+    // Variable named distinctly from the `presentIds` set used earlier
+    // for the prevPositions sweep — same concept, different lifecycle.
+    const animPresentIds = new Set(agents.map(a => a.id));
+    for (const id of Array.from(this.animStates.keys())) {
+      if (!animPresentIds.has(id)) this.animStates.delete(id);
     }
 
     ctx.restore();
@@ -655,9 +683,27 @@ export class Canvas2DRenderer implements Renderer {
     this.host = null;
     this.lastWidthPx = -1;
     this.lastHeightPx = -1;
-    this.prevPositions.clear();
-    this.lastSeenPositions.clear();
-    this.lastSeenTick = -1;
+    this.lastFrameSample.clear();
+    this.animStates.clear();
+    this.lastFrameAt = 0;
+  }
+
+  private _drawStateIcon(
+    ctx: CanvasRenderingContext2D,
+    state: string,
+    cx: number,
+    baseY: number,
+    phase: string,
+  ): void {
+    const glyph = STATE_VISUALS[state]?.glyph ?? '';
+    if (!glyph) return;                   // draw-guard — no fillText('')
+    ctx.save();
+    ctx.globalAlpha = phase === 'night' ? 0.4 : 1.0;
+    ctx.font = '18px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(glyph, cx, baseY - 18);
+    ctx.restore();
   }
 }
 

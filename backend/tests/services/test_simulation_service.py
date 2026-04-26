@@ -279,7 +279,7 @@ def test_create_simulation_spawns_four_colonies_at_corners(db_session):
     got = [(r.camp_x, r.camp_y) for r in rows]
     assert got == expected
     palette = [(r.name, r.color) for r in rows]
-    assert palette == simulation_service.DEFAULT_COLONY_PALETTE
+    assert palette == [(name, color) for name, color, _ in simulation_service.DEFAULT_COLONY_PALETTE]
     from app.engine import config
     for r in rows:
         assert r.food_stock == config.INITIAL_FOOD_STOCK

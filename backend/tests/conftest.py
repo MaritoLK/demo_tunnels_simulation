@@ -121,7 +121,9 @@ def app():
 # Ordering matters: events FK-restricts to agents, so events must die first.
 # SimulationState has no incoming FKs. One statement keeps it atomic and lets
 # RESTRICT and cascade semantics speak if the invariant ever flips.
-_TRUNCATE_TABLES = 'events, agents, world_tiles, colonies, simulation_state'
+_TRUNCATE_TABLES = (
+    'events, agents, world_tiles, colonies, simulation_state'
+)
 
 
 def _truncate_all(engine):

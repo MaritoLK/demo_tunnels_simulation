@@ -10,7 +10,7 @@ signature makes the contract impossible to bypass by accident.
 """
 from collections import deque
 
-from . import needs
+from . import config, needs
 
 
 DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -199,8 +199,7 @@ def forage(agent, world, *, rng):
     # full. A sated agent with empty cargo still forages (stockpiling
     # for the colony), and a hungry agent with a full pouch still
     # forages (the gather action feeds their own hunger regardless).
-    cargo = getattr(agent, 'cargo', 0.0)
-    if agent.hunger >= needs.NEED_MAX and cargo >= needs.CARRY_MAX:
+    if agent.hunger >= needs.NEED_MAX and agent.cargo >= needs.CARRY_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
     tile = adjacent_food_tile(agent, world)
     if tile is not None:
@@ -208,10 +207,10 @@ def forage(agent, world, *, rng):
         # nowhere to put surplus can't drain a tile for nothing. This
         # is the food-scarcity invariant: tile units only leave the
         # world through a pouch slot or a mouth.
-        pouch_room = needs.CARRY_MAX - cargo
+        pouch_room = needs.CARRY_MAX - agent.cargo
         taken = min(needs.FORAGE_TILE_DEPLETION, tile.resource_amount, pouch_room)
         tile.resource_amount -= taken
-        agent.cargo = cargo + taken
+        agent.cargo += taken
         # Hunger fills regardless — the gather action doubles as eating
         # on the spot. The FORAGE_HUNGER_RESTORE constant is independent
         # of `taken` so a tile-starved forage still feeds the agent
@@ -292,18 +291,14 @@ def rest_outdoors(agent):
     }
 
 
-def socialise(agent, agents, *, colony=None):
+def socialise(agent, agents, *, colony):
     """Refill social only when BOTH participants are on the colony's camp tile.
 
     Rationale (§day-night extension): socialising is a "home fire" ritual,
     not a chance encounter in the field. Social need only tops up when an
     agent returns to camp and finds a colony-mate there too. This forces
     a return loop: long expeditions let social decay → agent must come
-    back → if too late, they go rogue.
-
-    `colony` defaults to None for legacy callers (pre-camp tests). In
-    that path we preserve the old unconditional refill so older tests
-    keep passing."""
+    back → if too late, they go rogue."""
     # Honest-action guard: full social → no-op. Emits before the partner
     # lookup so we don't fire a sham 'passed in the field' event either.
     if agent.social >= needs.NEED_MAX:
@@ -312,15 +307,14 @@ def socialise(agent, agents, *, colony=None):
     if other is None:
         return {'type': 'idled', 'description': f'{agent.name} found no one to socialise with'}
 
-    if colony is not None:
-        at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
-        if not at_camp:
-            # Neighbours met in the field — no social refill. Still emits
-            # an event so the tick log shows the encounter.
-            return {
-                'type': 'idled',
-                'description': f'{agent.name} passed {other.name} in the field',
-            }
+    at_camp = colony.is_at_camp(agent.x, agent.y) and colony.is_at_camp(other.x, other.y)
+    if not at_camp:
+        # Neighbours met in the field — no social refill. Still emits
+        # an event so the tick log shows the encounter.
+        return {
+            'type': 'idled',
+            'description': f'{agent.name} passed {other.name} in the field',
+        }
 
     agent.social = min(needs.NEED_MAX, agent.social + needs.SOCIALISE_SOCIAL_RESTORE)
     other.social = min(needs.NEED_MAX, other.social + needs.SOCIALISE_SOCIAL_RESTORE)
@@ -370,7 +364,6 @@ def plant(agent, world, colony):
     This function re-guards all three; a violated pre-condition yields an
     `idled` no-op event so the engine never silently mutates state.
     """
-    from . import config
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state != 'none':
         return {'type': 'idled', 'description': f'{agent.name} found crop already here'}
@@ -403,7 +396,6 @@ def harvest(agent, world, colony):
     ownership" rule from the spec. Any agent can harvest any mature tile
     and the yield goes to their own colony's stock.
     """
-    from . import config
     tile = world.get_tile(agent.x, agent.y)
     if tile.crop_state != 'mature':
         return {'type': 'idled', 'description': f'{agent.name} found no mature crop'}
@@ -440,12 +432,11 @@ def deposit_cargo(agent, colony):
     whole cargo value, agent.cargo resets to 0, emits 'deposited' with
     the amount so the UI can flash the feedback.
     """
-    cargo = getattr(agent, 'cargo', 0.0)
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
-    if cargo <= 0:
+    if agent.cargo <= 0:
         return {'type': 'idled', 'description': f'{agent.name} has nothing to deposit'}
-    amount = cargo
+    amount = agent.cargo
     colony.food_stock += amount
     agent.cargo = 0.0
     agent.state = STATE_DEPOSITING
@@ -477,13 +468,12 @@ def eat_cargo(agent):
     meal. Caller (decide_action rogue branch) already gates on
     HUNGER_MODERATE, so the strict-less-than guard here is defensive.
     """
-    cargo = getattr(agent, 'cargo', 0.0)
-    if cargo <= 0:
+    if agent.cargo <= 0:
         return {'type': 'idled', 'description': f'{agent.name} had nothing in their pouch'}
     if agent.hunger >= needs.NEED_MAX:
         return {'type': 'idled', 'description': f'{agent.name} was already full on hunger'}
-    taken = min(1.0, cargo)
-    agent.cargo = cargo - taken
+    taken = min(1.0, agent.cargo)
+    agent.cargo -= taken
     agent.hunger = min(needs.NEED_MAX, agent.hunger + needs.FORAGE_HUNGER_RESTORE)
     agent.state = STATE_EATING
     return {
@@ -508,7 +498,6 @@ def eat_camp(agent, colony):
     Violations → idled no-op. Success → cap-fills hunger, emits
     ate_from_cache with amount=EAT_COST, flags agent.ate_this_dawn.
     """
-    from . import config
     if not colony.is_at_camp(agent.x, agent.y):
         return {'type': 'idled', 'description': f'{agent.name} not at camp'}
     if colony.food_stock < config.EAT_COST:

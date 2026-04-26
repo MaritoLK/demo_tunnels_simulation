@@ -24,8 +24,9 @@ from flask import Flask
 
 from app import db
 
-from . import simulation_service
+from . import broadcaster, simulation_service
 from .exceptions import SimulationNotFoundError
+from app.routes import serializers
 
 
 logger = logging.getLogger(__name__)
@@ -39,37 +40,94 @@ PAUSED_POLL_INTERVAL = 0.2
 # 10ms ≈ 100 ticks/sec — plenty for a demo, well under commit cost.
 MIN_INTERVAL = 0.01
 
+# After this many consecutive stepper failures, flip running=False so the
+# user sees "paused" instead of a silently-stuck sim. The loop keeps
+# polling control (it will resume immediately when the user unpauses)
+# so a transient DB blip doesn't poison the worker.
+MAX_CONSECUTIVE_FAILURES = 5
+
 _thread: threading.Thread | None = None
 _stop_event = threading.Event()
+_consecutive_failures = 0
 
 
-def _single_tick(control_provider, stepper):
+def _single_tick(control_provider, stepper, *, pause_on_fatal=None):
     """One iteration of the tick loop. Returns seconds to sleep next.
 
     Pure-ish: no threading, no app context. Caller injects:
       control_provider: callable → {running, speed} dict, or raises
                          SimulationNotFoundError if no sim exists.
       stepper:           callable (ticks=1) → advances the sim one tick.
+      pause_on_fatal:    callable () → None, invoked after
+                         MAX_CONSECUTIVE_FAILURES consecutive stepper
+                         failures. Flips running=False so the user sees
+                         a paused sim instead of silent stall. Optional
+                         so unit tests can inject a stub.
 
     Branches:
       * No sim → skip step, return paused interval.
       * Not running → skip step, return paused interval.
       * Running → step(1), return 1/speed (clamped).
-      * Stepper raises → log, return paused interval (back off).
+      * Stepper raises → log. After N in a row → pause_on_fatal().
     """
+    global _consecutive_failures
     try:
         control = control_provider()
     except SimulationNotFoundError:
         return PAUSED_POLL_INTERVAL
     if not control['running']:
+        _consecutive_failures = 0
         return PAUSED_POLL_INTERVAL
     try:
         stepper(ticks=1)
     except Exception:
-        logger.exception('tick_loop: step failed — backing off')
+        _consecutive_failures += 1
+        logger.exception(
+            'tick_loop: step failed (%d consecutive) — backing off',
+            _consecutive_failures,
+        )
+        if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES and pause_on_fatal:
+            logger.error(
+                'tick_loop: %d consecutive failures — auto-pausing sim',
+                _consecutive_failures,
+            )
+            try:
+                pause_on_fatal()
+            except Exception:
+                logger.exception('tick_loop: pause_on_fatal itself failed')
+            _consecutive_failures = 0
         return PAUSED_POLL_INTERVAL
+    _consecutive_failures = 0
+    try:
+        sim = simulation_service.get_current_simulation()
+        # Reuse the control dict from line 75 — a second read would hit the
+        # DB again AND open a consistency gap (a PATCH landing between the
+        # stepper commit and the broadcast would emit a snapshot whose
+        # running/speed reflect the future, not the tick that just ran).
+        time = simulation_service.time_snapshot()
+        payload = {
+            'sim': serializers.simulation_summary(sim, control, time),
+            'world': serializers.world_to_dict(sim.world),
+            'agents': [serializers.agent_to_dict(a) for a in sim.agents],
+            'colonies': [
+                serializers.colony_to_dict(c)
+                for c in sorted(sim.colonies.values(), key=lambda c: c.id)
+            ],
+        }
+        broadcaster.publish(payload)
+    except Exception:
+        logger.exception('tick_loop: broadcast failed — skipping this tick')
     speed = max(control['speed'], simulation_service.MIN_SPEED)
     return max(MIN_INTERVAL, 1.0 / speed)
+
+
+def _auto_pause():
+    """Flip the DB running flag to False. Used when the tick loop has
+    failed too many times in a row — surfaces the stall to the user."""
+    try:
+        simulation_service.update_simulation_control(running=False)
+    except SimulationNotFoundError:
+        pass
 
 
 def _thread_body(app: Flask):
@@ -87,6 +145,7 @@ def _thread_body(app: Flask):
                     interval = _single_tick(
                         control_provider=simulation_service.get_simulation_control,
                         stepper=simulation_service.step_simulation,
+                        pause_on_fatal=_auto_pause,
                     )
                 finally:
                     db.session.remove()

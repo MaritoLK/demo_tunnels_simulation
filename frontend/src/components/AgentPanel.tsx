@@ -10,11 +10,8 @@
 // the user's mental "open the inspector" gesture.
 import { useAgents } from '../api/queries';
 import { useViewStore } from '../state/viewStore';
-
-// Mirrors backend needs.CARRY_MAX. Duplicated at the wire boundary
-// (same pattern as FORAGE_SERVING in the renderer) — small scalar,
-// not worth a /config round-trip.
-const CARRY_MAX = 8;
+import { STATE_VISUALS } from '../render/animConfig';
+import { CARRY_MAX } from '../api/types';
 
 export function AgentPanel() {
   const selectedAgentId = useViewStore((s) => s.selectedAgentId);
@@ -45,7 +42,7 @@ export function AgentPanel() {
         <dt>state</dt>
         <dd>
           <span className={`pill ${agent.alive ? 'pill--alive' : 'pill--dead'}`}>
-            {agent.alive ? agent.state : 'deceased'}
+            {STATE_VISUALS[agent.state]?.glyph ?? ''} {agent.alive ? agent.state : 'deceased'}
           </span>
           {agent.alive && agent.rogue && (
             <span
@@ -64,6 +61,9 @@ export function AgentPanel() {
             >
               loner
             </span>
+          )}
+          {agent.decision_reason && (
+            <div className="decision-reason">{agent.decision_reason}</div>
           )}
         </dd>
         <dt>position</dt>

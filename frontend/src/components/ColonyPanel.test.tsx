@@ -4,8 +4,8 @@ import { describe, it, expect } from 'vitest';
 import { ColonyPanel } from './ColonyPanel';
 
 const COLONIES = [
-  { id: 1, name: 'Red',  color: '#e74c3c', camp_x: 3,  camp_y: 3,  food_stock: 18, growing_count: 2 },
-  { id: 2, name: 'Blue', color: '#3498db', camp_x: 16, camp_y: 3,  food_stock: 9,  growing_count: 1 },
+  { id: 1, name: 'Red',  color: '#e74c3c', camp_x: 3,  camp_y: 3,  food_stock: 18, growing_count: 2, sprite_palette: 'Red' },
+  { id: 2, name: 'Blue', color: '#3498db', camp_x: 16, camp_y: 3,  food_stock: 9,  growing_count: 1, sprite_palette: 'Blue' },
 ];
 
 describe('ColonyPanel', () => {

@@ -3,8 +3,9 @@ import hashlib
 import random
 
 from .agent import Agent, tick_agent
+from .colony import EngineColony
 from .world import World
-from . import cycle
+from . import config, cycle
 
 
 def _sub_seed(master, key):
@@ -48,8 +49,21 @@ class Simulation:
         self.seed = seed
         self.rng_spawn = random.Random(_sub_seed(seed, 'spawn'))
         self.rng_tick = random.Random(_sub_seed(seed, 'tick'))
-        # {colony_id: EngineColony}. Empty dict for legacy sims (pre-colony).
-        self.colonies = {c.id: c for c in (colonies or [])}
+        if colonies:
+            self.colonies = {c.id: c for c in colonies}
+        else:
+            # Synthesize a default colony for callers that don't supply one
+            # (the agent_count= convenience overload in new_simulation, direct
+            # Simulation() in unit tests). Keys on None so agents constructed
+            # without an explicit colony_id (Agent default == None) match the
+            # colony lookup in tick_agent. Lets the engine run a single,
+            # colony-aware tick path instead of branching on legacy shape.
+            default = EngineColony(id=None, name='_default', color='#000',
+                                   camp_x=0, camp_y=0,
+                                   food_stock=config.INITIAL_FOOD_STOCK,
+                                   growing_count=0,
+                                   sprite_palette='Blue')
+            self.colonies = {None: default}
 
     def snapshot_rng_state(self):
         """JSON-safe snapshot of both sub-stream RNGs for persistence."""
@@ -96,30 +110,16 @@ class Simulation:
         phase = cycle.phase_for(self.current_tick)
         self.recompute_growing_counts()
         snapshot = list(self.agents)
-        if self.colonies:
-            # Colony-aware: thread phase + colonies through the new tick_agent path.
-            for agent in snapshot:
-                if not agent.alive:
-                    continue
-                for event in tick_agent(
-                    agent, self.world, snapshot, self.colonies,
-                    phase=phase, rng=self.rng_tick,
-                ):
-                    event['tick'] = self.current_tick
-                    event['agent_id'] = agent.id
-                    events.append(event)
-        else:
-            # Legacy sim (no colonies wired). Use the pre-cultivation tick signature
-            # so _legacy_tick_agent runs — colonies_by_id=None disables phase gating
-            # and keeps existing audit scripts + test_simulation tests green. Retired
-            # when all callers migrate to colonies=[...] (later plan task).
-            for agent in snapshot:
-                if not agent.alive:
-                    continue
-                for event in tick_agent(agent, self.world, snapshot, rng=self.rng_tick):
-                    event['tick'] = self.current_tick
-                    event['agent_id'] = agent.id
-                    events.append(event)
+        for agent in snapshot:
+            if not agent.alive:
+                continue
+            for event in tick_agent(
+                agent, self.world, snapshot, self.colonies,
+                phase=phase, rng=self.rng_tick,
+            ):
+                event['tick'] = self.current_tick
+                event['agent_id'] = agent.id
+                events.append(event)
         for event in self.world.tick(phase):
             event['tick'] = self.current_tick
             events.append(event)
@@ -169,9 +169,10 @@ def new_simulation(width, height, seed=None, agent_count=0, agent_name_prefix='A
             f'agent_count={agent_count} exceeds min(world_cells={width * height}, MAX_AGENTS={MAX_AGENTS})'
         )
     # Colony kwargs travel as a pair: either both set (colony-aware spawn)
-    # or both None (legacy agent_count spawn). Half-set routes silently to
-    # the wrong branch and blows up 3 frames deep in tick_agent's missing-
-    # colony_id invariant — fail loud at the seam instead.
+    # or both None (random spawn under the synthesized default colony).
+    # Half-set routes silently to the wrong branch and blows up 3 frames
+    # deep in tick_agent's missing-colony_id invariant — fail loud at the
+    # seam instead.
     if (colonies is None) != (agents_per_colony is None):
         raise ValueError(
             'colonies and agents_per_colony must be passed together; '

@@ -11,7 +11,6 @@ Responsibilities kept here (and nowhere else):
 """
 import logging
 import os
-import traceback
 
 from flask import Flask
 from flask_cors import CORS
@@ -50,12 +49,30 @@ def create_app():
 
     app.register_blueprint(simulation_bp, url_prefix="/api/v1")
 
+    from app.routes.stream import bp as stream_bp
+    app.register_blueprint(stream_bp, url_prefix='/api/v1')
+
     _register_error_handlers(app)
 
     # Start the background tick loop unless explicitly disabled (tests set
     # DISABLE_TICK_LOOP=1 so the loop doesn't mutate DB state while the
     # test client is driving it via POST /step). See §9.27.
-    if not os.environ.get("DISABLE_TICK_LOOP"):
+    #
+    # Skip in the debug-reloader parent. Flask's reloader runs `create_app`
+    # twice: once in the parent (file-watching only), once in the child
+    # (where `WERKZEUG_RUN_MAIN=true` and HTTP requests are actually
+    # served). Two tick threads across two processes would each keep their
+    # own `_current_sim` while sharing the DB — a PUT served by the child
+    # refreshes only the child's cache, so the parent's tick keeps emitting
+    # events with stale agent ids → FK violations. Surfaced by
+    # scripts/repro_put_race.py in dev. Production (gunicorn, no reloader)
+    # is unaffected because WERKZEUG_RUN_MAIN isn't set there and the
+    # FLASK_DEBUG env gate isn't tripped.
+    reloader_parent = (
+        os.environ.get("FLASK_DEBUG") in ("1", "true")
+        and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+    )
+    if not os.environ.get("DISABLE_TICK_LOOP") and not reloader_parent:
         tick_loop.start(app)
 
     return app
@@ -104,8 +121,11 @@ def _register_error_handlers(app):
     def _internal(e):
         # Catch-all so the default Werkzeug traceback never leaks into
         # the response body. Traceback still goes to server logs.
-        logger.error("unhandled exception", exc_info=e)
-        traceback.print_exc()
+        # Under TESTING re-raise so pytest sees the real exception in
+        # the failure message instead of a generic 500-shaped JSON.
+        logger.exception("unhandled exception")
+        if app.config.get("TESTING"):
+            raise
         return {"error": "internal server error"}, 500
 
 

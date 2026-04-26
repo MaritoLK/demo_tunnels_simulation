@@ -18,9 +18,18 @@ dist/
 # Personal study notes
 STUDY_NOTES.md
 
-docs/
+# docs/ is mostly local-only, but design specs and post-mortems are versioned
+docs/*
+!docs/superpowers/
+!docs/audit/
+docs/superpowers/*
+!docs/superpowers/specs/
+!docs/superpowers/plans/
 
 INTERVIEW_DEFENSE.md
 
 # Headless screenshot tool (playwright + chromium binary, ~300MB)
 screenshots/
+
+# Presentation / design artifacts — kept locally, not versioned.
+*.docx

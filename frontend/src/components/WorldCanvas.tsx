@@ -24,14 +24,16 @@
 //     under the cursor across the zoom, which feels natural.
 //   - A click without meaningful drag hit-tests the agent layer and
 //     updates `selectedAgentId` via Zustand.
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../api/client';
-import { useAgents, useColonies, useSimulation, useWorld } from '../api/queries';
+import type { Agent, Colony } from '../api/types';
+import { useAgents, useColonies, useSimulation, useWorld, useWorldStream } from '../api/queries';
 import { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { FrameSnapshot, Renderer } from '../render/Renderer';
 import { isReducedMotion } from '../state/reducedMotion';
 import { useViewStore } from '../state/viewStore';
+import { AgentTooltip } from './AgentTooltip';
 
 // Source sprites are 64×64, so BASE_TILE_PX=64 means zoom=1.0 renders
 // at native resolution (no scaling, sharpest result). The zoom floor
@@ -46,6 +48,23 @@ const CLICK_DRAG_THRESHOLD = 4;
 // Inset so the fitted world doesn't kiss the frame edge.
 const FIT_PAD = 24;
 
+function pixelToTile(
+  px: number, py: number,
+  snap: { cameraX: number; cameraY: number; tilePx: number },
+): { x: number; y: number } {
+  return {
+    x: Math.floor((px - snap.cameraX) / snap.tilePx),
+    y: Math.floor((py - snap.cameraY) / snap.tilePx),
+  };
+}
+
+interface HoverState {
+  agent: Agent;
+  colony: Colony | undefined;
+  screenX: number;
+  screenY: number;
+}
+
 export function WorldCanvas() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -59,6 +78,8 @@ export function WorldCanvas() {
     lastY: number;
     totalMoved: number;
   } | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const lastMoveTsRef = useRef(0);
   // Track whether the user has manually adjusted the view (wheel-zoom
   // *or* pan) since the last world-load. If they have, don't clobber
   // their view when the frame resizes — only auto-fit on world change.
@@ -72,11 +93,19 @@ export function WorldCanvas() {
   // seed + same dims) the world is byte-for-byte the same, so keeping
   // their view is correct.
   const fittedWorldSigRef = useRef<string | null>(null);
+  // Tracks the last server_time_ms we pushed into the renderer's
+  // interpolation buffer. Without this, any change in the snap-building
+  // useEffect deps (zoom, pan, selection) re-pushes the same snapshot
+  // and evicts the older one — InterpBuffer ends up holding two copies
+  // of the same instant, span=0, and every agent snaps to target until
+  // the next genuine tick arrives. Dedup by server timestamp here.
+  const lastIngestedServerMsRef = useRef<number>(-1);
 
   const sim = useSimulation();
   const world = useWorld();
   const agents = useAgents();
   const colonies = useColonies();
+  const { snapshot: streamSnap } = useWorldStream();
   const zoom = useViewStore((s) => s.zoom);
   const cameraX = useViewStore((s) => s.cameraX);
   const cameraY = useViewStore((s) => s.cameraY);
@@ -91,17 +120,21 @@ export function WorldCanvas() {
   const tilePx = BASE_TILE_PX * zoom;
 
   // Keep the snapshot ref in sync with the latest server + view state.
+  // Prefer SSE stream data when available; fall back to poll-based queries.
   useEffect(() => {
     if (!world.data) {
       snapRef.current = null;
       return;
     }
+    const effectiveAgents = streamSnap?.agents ?? agents.data ?? [];
+    const effectiveSim = streamSnap?.sim ?? sim.data;
+    const effectiveColonies = streamSnap?.colonies ?? colonies.data ?? [];
     snapRef.current = {
       width: world.data.width,
       height: world.data.height,
       tiles: world.data.tiles,
-      agents: agents.data ?? [],
-      colonies: colonies.data ?? [],
+      agents: effectiveAgents,
+      colonies: effectiveColonies,
       tilePx,
       cameraX,
       cameraY,
@@ -111,9 +144,23 @@ export function WorldCanvas() {
       // the OS preference can toggle while the app is running, and
       // the extra matchMedia call is cheap.
       reducedMotion: isReducedMotion(),
-      currentTick: sim.data?.tick ?? 0,
+      currentTick: effectiveSim?.tick ?? 0,
+      serverNowMs: effectiveSim?.server_time_ms,
+      phase: effectiveSim?.phase,
     };
-  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data?.tick]);
+    if (
+      rendererRef.current
+      && effectiveSim?.server_time_ms != null
+      && effectiveSim.server_time_ms !== lastIngestedServerMsRef.current
+    ) {
+      lastIngestedServerMsRef.current = effectiveSim.server_time_ms;
+      rendererRef.current.ingestSnapshot?.({
+        serverTimeMs: effectiveSim.server_time_ms,
+        tick: effectiveSim.tick,
+        agents: effectiveAgents.map((a: { id: number; x: number; y: number }) => ({ id: a.id, x: a.x, y: a.y })),
+      });
+    }
+  }, [world.data, agents.data, colonies.data, tilePx, cameraX, cameraY, selectedAgentId, selectedTile, sim.data, streamSnap]);
 
   // Auto-fit on world-load and observe-frame resize.
   useEffect(() => {
@@ -195,6 +242,7 @@ export function WorldCanvas() {
     // every terminating path (release, cancel, focus loss, drag-drop
     // sequence). See §9.29-F2 for the audit trail.
     const onPointerDown = (e: PointerEvent) => {
+      setHover(null);               // drag-start cancels hover
       // Primary button only; ignore right-click/middle so they don't
       // start a pan that the user doesn't expect.
       if (e.button !== 0) return;
@@ -281,11 +329,48 @@ export function WorldCanvas() {
       userAdjustedRef.current = true;
     };
 
+    const onPointerMoveHover = (e: PointerEvent) => {
+      if (dragRef.current) {
+        setHover(null);
+        return;
+      }
+      const now = performance.now();
+      if (now - lastMoveTsRef.current < 16) return;    // ~60fps throttle
+      lastMoveTsRef.current = now;
+
+      const snap = snapRef.current;
+      if (!snap) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+      const tile = pixelToTile(localX, localY, snap);
+
+      const agent = snap.agents.find(
+        a => a.alive && a.x === tile.x && a.y === tile.y,
+      );
+      if (!agent) {
+        setHover(null);
+        return;
+      }
+      const colony = snap.colonies.find(c => c.id === agent.colony_id);
+      setHover({
+        agent,
+        colony,
+        screenX: e.clientX,
+        screenY: e.clientY,
+      });
+    };
+
+    const onPointerLeave = () => setHover(null);
+
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointermove', onPointerMoveHover);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onLostCapture);
     canvas.addEventListener('lostpointercapture', onLostCapture);
+    canvas.addEventListener('pointerleave', onPointerLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
     // selectTile is referenced inside onPointerUp; keep deps tracked.
@@ -293,9 +378,11 @@ export function WorldCanvas() {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointermove', onPointerMoveHover);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onLostCapture);
       canvas.removeEventListener('lostpointercapture', onLostCapture);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
       canvas.removeEventListener('wheel', onWheel);
       rendererRef.current?.dispose();
       rendererRef.current = null;
@@ -314,8 +401,21 @@ export function WorldCanvas() {
 
   return (
     <div className="world-canvas">
-      <div ref={hostRef} className="world-canvas__host" />
+      <div
+        ref={hostRef}
+        className="world-canvas__host"
+        role="img"
+        aria-label="Colony simulation map — pan with drag, zoom with wheel, click to select an agent or tile"
+      />
       {status && <div className="overlay">{status}</div>}
+      {hover && (
+        <AgentTooltip
+          agent={hover.agent}
+          colony={hover.colony}
+          screenX={hover.screenX}
+          screenY={hover.screenY}
+        />
+      )}
     </div>
   );
 }

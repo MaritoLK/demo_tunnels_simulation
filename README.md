@@ -15,8 +15,9 @@ WorldBox-style top-down sandbox with pixel-art tiles.
 
 ```bash
 docker compose up
-# frontend → http://localhost:5173
-# backend  → http://localhost:8000
+# app      → http://localhost       (nginx: / → react, /api/* → flask)
+# frontend → http://localhost:5173  (vite dev server, direct)
+# backend  → http://localhost:5000  (flask, loopback only)
 ```
 
 Tests:
