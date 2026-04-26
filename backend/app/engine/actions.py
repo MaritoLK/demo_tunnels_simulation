@@ -49,12 +49,20 @@ PATH_SEARCH_HORIZON = 40
 
 def _first_step_bfs(agent, target_x, target_y, world):
     """Return the (dx, dy) for the first step of a shortest walkable path
-    from the agent to (target_x, target_y), or None if unreachable within
-    PATH_SEARCH_HORIZON.
+    from the agent to (target_x, target_y), or None if unreachable.
 
     The target tile itself is accepted even if not walkable, so callers
     can route toward e.g. a camp marker without coupling this function
     to camp-tile semantics. Mid-path tiles must be walkable.
+
+    Search is bounded by the closed walkable graph — BFS visits each
+    tile at most once and the world cap (MAX_WORLD_CELLS=10_000)
+    bounds the worst-case node count. Pre-fix this function applied
+    PATH_SEARCH_HORIZON to depth, which on a 60×60 demo map left
+    agents at the far corner unable to find a path home (Manhattan
+    104 > horizon 40); the unreachable-target case below still
+    returns None when the camp sits behind genuinely impassable
+    terrain.
     """
     sx, sy = agent.x, agent.y
     if (sx, sy) == (target_x, target_y):
@@ -65,11 +73,9 @@ def _first_step_bfs(agent, target_x, target_y, world):
     # on the next step, so tracking the first direction per wavefront
     # node is enough and avoids a second parent-chain walk.
     first_dir = {(sx, sy): None}
-    queue = deque([(sx, sy, 0)])
+    queue = deque([(sx, sy)])
     while queue:
-        x, y, depth = queue.popleft()
-        if depth >= PATH_SEARCH_HORIZON:
-            continue
+        x, y = queue.popleft()
         for ddx, ddy in DIRECTIONS:
             nx, ny = x + ddx, y + ddy
             if (nx, ny) in first_dir:
@@ -85,7 +91,7 @@ def _first_step_bfs(agent, target_x, target_y, world):
             if is_target:
                 return this_first
             first_dir[(nx, ny)] = this_first
-            queue.append((nx, ny, depth + 1))
+            queue.append((nx, ny))
     return None
 
 

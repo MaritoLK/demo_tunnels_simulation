@@ -129,8 +129,17 @@ def decide_action(agent, world, colony, phase) -> Decision:
     if agent.health < needs.HEALTH_CRITICAL:
         if agent.energy < needs.ENERGY_CRITICAL:
             return Decision('rest', f'health < {hc}, energy < {ec} → rest')
+        # Pouch food first: an agent with food on hand should never
+        # starve to death holding food. The 1700-tick diagnostic on
+        # 2026-04-26 caught 17 deaths where agents with full pouches
+        # exhausted local food and died during the BFS-then-explore
+        # fallback. Survival ranks above resource conservation.
+        if agent.cargo > 0:
+            return Decision('eat_cargo', f'health < {hc} → eat from pouch')
         return Decision('forage', f'health < {hc} → forage to recover')
     if agent.hunger < needs.HUNGER_CRITICAL:
+        if agent.cargo > 0:
+            return Decision('eat_cargo', f'hunger < {hu_c} → eat from pouch')
         return Decision('forage', f'hunger < {hu_c} → forage now')
     if agent.energy < needs.ENERGY_CRITICAL:
         return Decision('rest', f'energy < {ec} → rest')
