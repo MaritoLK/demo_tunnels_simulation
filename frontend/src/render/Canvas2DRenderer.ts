@@ -347,6 +347,28 @@ export class Canvas2DRenderer implements Renderer {
       }
     }
 
+    // Wolves marker — draw a 🐺 glyph on revealed wolves tiles so the
+    // player can SEE the hazard once discovered. Hidden behind fog by
+    // construction (we only iterate explored cells in this pass), so
+    // wolves only become visible after a colony has scouted that tile.
+    // Drawn after fog and before crops/camps/agents so the marker sits
+    // in the world layer, not on top of the colony's units.
+    if (exploredCells.size > 0) {
+      ctx.font = `${Math.max(12, Math.floor(tilePx * 0.65))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (let y = 0; y < height; y++) {
+        const rowTiles = tiles[y];
+        if (!rowTiles) continue;
+        for (let x = 0; x < width; x++) {
+          if (!exploredCells.has(y * width + x)) continue;
+          const t = rowTiles[x];
+          if (!t || !t.wolves) continue;
+          ctx.fillText('🐺', x * tilePx + tilePx / 2, y * tilePx + tilePx / 2);
+        }
+      }
+    }
+
     // Camp markers — house sprite when atlas is loaded, colored square
     // fallback otherwise. Drawn above terrain so the camp reads as a
     // built object, below agents so the occupant covers their own tile.

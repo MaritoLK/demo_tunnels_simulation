@@ -72,6 +72,7 @@ def tile_to_row(tile):
         crop_state=tile.crop_state,
         crop_growth_ticks=tile.crop_growth_ticks,
         crop_colony_id=tile.crop_colony_id,
+        wolves=tile.wolves,
     )
 
 
@@ -85,6 +86,7 @@ def row_to_tile(row):
         crop_state=row.crop_state,
         crop_growth_ticks=row.crop_growth_ticks,
         crop_colony_id=row.crop_colony_id,
+        wolves=row.wolves,
     )
 
 

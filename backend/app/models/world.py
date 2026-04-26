@@ -24,6 +24,14 @@ class WorldTile(db.Model):
         db.ForeignKey('colonies.id', ondelete='SET NULL'),
         nullable=True,
     )
+    # Wolves are a static hazard set at world generation. Agents who
+    # step onto a wolves tile take a bite-damage roll. Persisted per-
+    # tile because the layout is part of the world (a reload should
+    # restore the same hazard map, not regenerate it).
+    wolves = db.Column(
+        db.Boolean, nullable=False,
+        default=False, server_default=db.false(),
+    )
 
     __table_args__ = (
         db.UniqueConstraint('x', 'y', name='uq_world_tiles_xy'),

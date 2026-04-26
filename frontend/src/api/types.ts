@@ -27,6 +27,11 @@ export interface Tile {
   crop_state: CropState;
   crop_growth_ticks: number;
   crop_colony_id: number | null;
+  // Static hazard. When TRUE the tile bites any agent that steps onto
+  // it for WOLF_BITE damage. Persisted at world-generation, never
+  // mutates during a run. Renderer hides the marker behind fog so the
+  // player only sees wolves they've discovered.
+  wolves?: boolean;
 }
 
 export interface WorldSnapshot {

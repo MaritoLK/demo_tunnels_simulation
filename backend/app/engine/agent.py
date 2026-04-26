@@ -247,7 +247,33 @@ def tick_agent(agent, world, all_agents, colonies_by_id, *, phase, rng):
         )
     decision = decide_action(agent, world, colony, phase)
     agent.last_decision_reason = decision.reason
+    pre_x, pre_y = agent.x, agent.y
     events.append(execute_action(decision.action, agent, world, all_agents, colony, rng=rng))
+
+    # Wolf hazard: bite only on entry, not while standing still. Without
+    # the entry check, an agent who can't reach safe ground would die in
+    # a few ticks from continuous bites — one bad step turns into a
+    # death spiral. Entering a wolves tile is the deliberate risk; the
+    # bite is the cost of that one decision, not chronic damage.
+    moved = (agent.x, agent.y) != (pre_x, pre_y)
+    if moved:
+        dest = world.get_tile(agent.x, agent.y)
+        if dest.wolves and agent.alive:
+            damage = rng.randint(needs.WOLF_BITE_MIN, needs.WOLF_BITE_MAX)
+            agent.health = max(0.0, agent.health - damage)
+            events.append({
+                'type': 'wolf_attack',
+                'description': f'{agent.name} was bitten by wolves at ({agent.x},{agent.y}) → -{damage} hp',
+                'data': {
+                    'tile_x': agent.x,
+                    'tile_y': agent.y,
+                    'damage': damage,
+                },
+            })
+            if agent.health <= 0:
+                events.append(actions.die(agent))
+                agent.age += 1
+                return events
 
     agent.age += 1
     return events
