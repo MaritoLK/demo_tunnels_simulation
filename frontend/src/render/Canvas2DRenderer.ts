@@ -325,14 +325,25 @@ export class Canvas2DRenderer implements Renderer {
             // count down 1-for-1 with forages.
             const units = Math.ceil(tile.resource_amount);
             if (units >= 2 && tilePx >= 14) {
-              drawFoodBadge(ctx, units, px, py, tilePx);
+              drawCountBadge(ctx, units, px, py, tilePx, '#ffe9c4');
             }
           }
-          // Wood/stone: no overlay. The bush/rock decoration sprite
-          // already communicates the resource; a dot on top produces
-          // the "brown circle above tree / white circle on rock" bug
-          // where the resource pip visually fights the decoration.
-          // Dots are only for the procedural fallback path below.
+          // Wood / stone: ×N badge in the resource's tint. Same shape
+          // as food's: outline-then-fill so digits read against any
+          // terrain. The user wanted the count visible at a glance —
+          // an agent looking at a forest can tell how many chops are
+          // left before the tile becomes a stump.
+          if (tile.resource_type === 'wood' && tile.resource_amount > 0) {
+            const units = Math.ceil(tile.resource_amount);
+            if (units >= 2 && tilePx >= 14) {
+              drawCountBadge(ctx, units, px, py, tilePx, '#cdeac0');
+            }
+          } else if (tile.resource_type === 'stone' && tile.resource_amount > 0) {
+            const units = Math.ceil(tile.resource_amount);
+            if (units >= 2 && tilePx >= 14) {
+              drawCountBadge(ctx, units, px, py, tilePx, '#e0e6ee');
+            }
+          }
         } else {
           // Procedural fallback — flat biome fill plus deterministic
           // corner speckle. Kept verbatim so tests and screenshots
@@ -1017,14 +1028,15 @@ function drawResourceDot(
 // "×N" badge in the bottom-right of the food tile, so the player can
 // see the stack shrink forage-by-forage rather than wait for the whole
 // sprite to disappear on the last serving.
-function drawFoodBadge(
+function drawCountBadge(
   ctx: CanvasRenderingContext2D,
-  servings: number,
+  units: number,
   px: number,
   py: number,
   tilePx: number,
+  fillColor: string,
 ): void {
-  const label = `×${servings}`;
+  const label = `×${units}`;
   const fontPx = Math.max(9, Math.floor(tilePx * 0.32));
   ctx.font = `700 ${fontPx}px system-ui, sans-serif`;
   ctx.textAlign = 'right';
@@ -1035,6 +1047,6 @@ function drawFoodBadge(
   ctx.lineWidth = Math.max(2, Math.floor(tilePx * 0.1));
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.strokeText(label, tx, ty);
-  ctx.fillStyle = '#ffe9c4';
+  ctx.fillStyle = fillColor;
   ctx.fillText(label, tx, ty);
 }
