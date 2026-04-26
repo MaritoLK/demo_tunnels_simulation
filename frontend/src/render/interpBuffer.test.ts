@@ -76,4 +76,15 @@ describe('InterpBuffer', () => {
     // departed agent is pinned at its last-known position
     expect(out.positions.get(9)).toEqual({ x: 9, y: 9, alphaRaw: 1 });
   });
+
+  it('lastSnapInterval returns the gap between the two newest snaps', () => {
+    const buf = new InterpBuffer();
+    expect(buf.lastSnapInterval()).toBeNull();
+    buf.push(snap(1000, 1, [{ id: 1, x: 0, y: 0 }]));
+    expect(buf.lastSnapInterval()).toBeNull();
+    buf.push(snap(1750, 2, [{ id: 1, x: 1, y: 0 }]));
+    expect(buf.lastSnapInterval()).toBe(750);
+    buf.push(snap(2000, 3, [{ id: 1, x: 2, y: 0 }]));
+    expect(buf.lastSnapInterval()).toBe(250);
+  });
 });

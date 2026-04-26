@@ -173,9 +173,21 @@ export class Canvas2DRenderer implements Renderer {
   }
 
   /** Push a new server snapshot into the interpolation buffer.
-   *  Called by WorldCanvas whenever a stream or poll snapshot arrives. */
+   *  Called by WorldCanvas whenever a stream or poll snapshot arrives.
+   *
+   *  The buffer is keyed in CLIENT receive time (`performance.now()`),
+   *  not server clock. Server time is frozen between snaps, so anchoring
+   *  the renderer's sample clock to it left the interp fraction stuck —
+   *  agents teleported to the latest position the moment a snap arrived
+   *  and then sat still until the next one. Client time advances 1 ms
+   *  per 1 ms, so a sample clock derived from `performance.now()` walks
+   *  smoothly between snaps and the agent actually walks the tile. */
   ingestSnapshot(snap: { serverTimeMs: number; tick: number; agents: Array<{ id: number; x: number; y: number }> }): void {
-    this.interpBuffer.push(snap);
+    this.interpBuffer.push({
+      serverTimeMs: performance.now(),
+      tick: snap.tick,
+      agents: snap.agents,
+    });
   }
 
   drawFrame(snap: FrameSnapshot): void {
@@ -186,15 +198,17 @@ export class Canvas2DRenderer implements Renderer {
       selectedAgentId, selectedTile, reducedMotion,
     } = snap;
 
-    // Sample the interpolation buffer at render-time. The render time
-    // is server_time_ms - INTERP_DELAY_MS, which keeps renderTime between
-    // two known snapshots — always interpolating measured truths rather
-    // than extrapolating past the newest one.
+    // Sample the interpolation buffer one tick interval behind `now`, so
+    // sampleTime walks from the older snap's receive time forward to the
+    // newer's at 1 ms/ms. INTERP_DELAY adapts to the observed snap gap
+    // (≈ tick interval at the current sim speed) — keeps t in [0, 1]
+    // across the full interval so the agent is animating every frame
+    // instead of pinned at the head of each tick. Falls back to a
+    // single-tick default while the buffer is still warming.
     const now = performance.now();
-    const INTERP_DELAY_MS = 100;
-    const sampleTimeMs = snap.serverNowMs != null
-      ? snap.serverNowMs - INTERP_DELAY_MS
-      : now - INTERP_DELAY_MS;
+    const INTERP_DELAY_FALLBACK_MS = 250;
+    const interpDelayMs = this.interpBuffer.lastSnapInterval() ?? INTERP_DELAY_FALLBACK_MS;
+    const sampleTimeMs = now - interpDelayMs;
     const sample = this.interpBuffer.sampleAt(sampleTimeMs);
 
     // Present ids = whoever the buffer is producing a position for

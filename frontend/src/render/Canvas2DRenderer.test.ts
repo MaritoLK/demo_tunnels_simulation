@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Canvas2DRenderer, pickVariant } from './Canvas2DRenderer';
 import type { FrameSnapshot } from './Renderer';
 
@@ -285,6 +285,84 @@ describe('Canvas2DRenderer — lifecycle fade applies to overlays', () => {
     // At least one overlay-class fill (shadow, cargo pip, gloss, halo)
     // had to land at < 1 alpha — pre-fix every one of these was 1.
     expect(fills.some((a) => a < 1)).toBe(true);
+
+    r.dispose();
+  });
+});
+
+
+describe('Canvas2DRenderer — interpolation across snapshots', () => {
+  // Regression: sampleTime used to be anchored to snap.serverNowMs minus
+  // a fixed offset. Server time only advances when a new snapshot
+  // arrives, so the interp fraction was frozen between snaps — the
+  // agent popped to a fixed position when each snap arrived and then
+  // sat still until the next one (the "teleport every tick" feel).
+  // Fix: anchor to performance.now() and adapt the offset to the
+  // observed snap interval, so the sample clock walks 1 ms per ms and
+  // the agent is animating every frame.
+  let host: HTMLDivElement;
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    nowSpy?.mockRestore();
+  });
+
+  it('agent body x advances smoothly between server snapshots', () => {
+    let mockNow = 0;
+    nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => mockNow);
+
+    // Capture shadow ellipse cx — line 1 is the body's drop shadow,
+    // its cx is the first thing drawn per agent and reflects the
+    // interpolated position before any other state churn.
+    const ctxSpy = makeCtxSpy();
+    const ellipseCx: number[] = [];
+    ctxSpy.ellipse = vi.fn((cx: number) => { ellipseCx.push(cx); });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+      () => ctxSpy as unknown as CanvasRenderingContext2D,
+    );
+
+    const r = new Canvas2DRenderer();
+    r.mount(host);
+    r.resize(64, 64);
+
+    // Two snaps 1000 ms apart (client time). Agent steps from x=0 to x=10.
+    mockNow = 0;
+    r.ingestSnapshot({ serverTimeMs: 1, tick: 1, agents: [{ id: 7, x: 0, y: 0 }] });
+    mockNow = 1000;
+    r.ingestSnapshot({ serverTimeMs: 2, tick: 2, agents: [{ id: 7, x: 10, y: 0 }] });
+
+    function bodyAgent(x: number) {
+      return [
+        { id: 7, name: 'A', x, y: 0, health: 100, hunger: 80, energy: 80,
+          social: 80, age: 0, state: 'idle', alive: true, colony_id: null,
+          decision_reason: '' },
+      ];
+    }
+
+    // Draw at three increasing client times. Ellipse cx must climb
+    // monotonically — equal cx across frames would be the teleport bug.
+    mockNow = 1100;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1100 = ellipseCx[0];
+
+    mockNow = 1500;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1500 = ellipseCx[0];
+
+    mockNow = 1900;
+    ellipseCx.length = 0;
+    r.drawFrame(makeSnap({ tilePx: 32, agents: bodyAgent(10), selectedAgentId: null }));
+    const cxAt1900 = ellipseCx[0];
+
+    expect(cxAt1500).toBeGreaterThan(cxAt1100);
+    expect(cxAt1900).toBeGreaterThan(cxAt1500);
 
     r.dispose();
   });
