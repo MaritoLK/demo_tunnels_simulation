@@ -284,7 +284,10 @@ def step_simulation(ticks=1):
             dirty_tile_coords = {
                 (e['data']['tile_x'], e['data']['tile_y'])
                 for e in events
-                if e['type'] in ('foraged', 'planted', 'harvested', 'crop_matured')
+                if e['type'] in (
+                    'foraged', 'planted', 'harvested', 'crop_matured',
+                    'gathered_wood', 'gathered_stone',
+                )
             }
             if dirty_tile_coords:
                 _update_dirty_tiles(sim, dirty_tile_coords)
@@ -292,7 +295,10 @@ def step_simulation(ticks=1):
             dirty_colony_ids = {
                 e['data']['colony_id']
                 for e in events
-                if e['type'] in ('harvested', 'ate_from_cache', 'deposited')
+                if e['type'] in (
+                    'harvested', 'ate_from_cache', 'deposited',
+                    'gathered_wood', 'gathered_stone', 'upgraded_camp',
+                )
             }
             if dirty_colony_ids:
                 _update_dirty_colonies(sim, dirty_colony_ids)

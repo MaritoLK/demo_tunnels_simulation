@@ -444,7 +444,16 @@ export class Canvas2DRenderer implements Renderer {
       ctx.arc(campCx, campCy, ringR, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
-      const houseSprite = sprites ? sprites.houses[colony.name] : undefined;
+      const houseTriplet = sprites ? sprites.houses[colony.name] : undefined;
+      // Tier index — clamp to the available sprite count so a future
+      // backend bump beyond MAX_HOUSE_TIER doesn't crash the render.
+      // Falls back to 0 when the field is undefined (older snapshots
+      // during a rolling deploy).
+      const tier = Math.max(0, Math.min(
+        houseTriplet ? houseTriplet.length - 1 : 0,
+        colony.tier ?? 0,
+      ));
+      const houseSprite = houseTriplet ? houseTriplet[tier] : undefined;
       if (sprites && houseSprite) {
         const houseW = tilePx * 2;
         const houseH = tilePx * (HOUSE_FRAME_H / HOUSE_FRAME_W) * 2;

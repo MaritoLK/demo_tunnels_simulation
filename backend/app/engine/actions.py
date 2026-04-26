@@ -633,6 +633,101 @@ def harvest(agent, world, colony):
     }
 
 
+def gather_wood(agent, world, colony):
+    """Take GATHER_WOOD_AMOUNT off the wood tile under `agent` and credit
+    `colony.wood_stock` directly. No per-agent transport — agents act as
+    lumberjacks who deliver instantly to the colony stock for the demo.
+
+    Pre-conditions:
+      * agent's own tile has resource_type == 'wood' and amount > 0
+    Violations → idled no-op.
+    """
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.resource_type != 'wood' or tile.resource_amount <= 0:
+        return {'type': 'idled', 'description': f'{agent.name} found no wood'}
+    taken = min(config.GATHER_WOOD_AMOUNT, tile.resource_amount)
+    tile.resource_amount -= taken
+    colony.wood_stock += taken
+    agent.state = STATE_FORAGING
+    return {
+        'type': 'gathered_wood',
+        'description': f'{agent.name} gathered wood at ({tile.x},{tile.y})',
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'amount_taken': taken,
+            'colony_id': colony.id,
+            'agent_id': agent.id,
+        },
+    }
+
+
+def gather_stone(agent, world, colony):
+    """Symmetric to `gather_wood` for stone tiles."""
+    tile = world.get_tile(agent.x, agent.y)
+    if tile.resource_type != 'stone' or tile.resource_amount <= 0:
+        return {'type': 'idled', 'description': f'{agent.name} found no stone'}
+    taken = min(config.GATHER_STONE_AMOUNT, tile.resource_amount)
+    tile.resource_amount -= taken
+    colony.stone_stock += taken
+    agent.state = STATE_FORAGING
+    return {
+        'type': 'gathered_stone',
+        'description': f'{agent.name} gathered stone at ({tile.x},{tile.y})',
+        'data': {
+            'tile_x': tile.x,
+            'tile_y': tile.y,
+            'amount_taken': taken,
+            'colony_id': colony.id,
+            'agent_id': agent.id,
+        },
+    }
+
+
+def can_upgrade(colony):
+    """Pure check: is `colony` eligible to upgrade to the next tier?
+
+    Single source of truth for the upgrade gate — both decide_action
+    and the upgrade_camp action consult this so the ladder check and
+    the action re-check share the same shape (CLAUDE.md design
+    principle, same pattern as is_plantable)."""
+    if colony.tier >= config.MAX_COLONY_TIER:
+        return False
+    next_cost = config.UPGRADE_TIER_COSTS[colony.tier + 1]
+    return (colony.wood_stock >= next_cost['wood']
+            and colony.stone_stock >= next_cost['stone'])
+
+
+def upgrade_camp(agent, colony):
+    """Spend the next-tier wood/stone cost to bump `colony.tier` by 1.
+
+    Pre-conditions: agent at camp tile + colony eligible per
+    `can_upgrade`. Tier cap at MAX_COLONY_TIER. Each tier swaps the
+    house sprite on the frontend and bumps the per-agent fog reveal
+    radius by +tier in simulation._refresh_fog.
+    """
+    if not colony.is_at_camp(agent.x, agent.y):
+        return {'type': 'idled', 'description': f'{agent.name} not at camp'}
+    if not can_upgrade(colony):
+        return {'type': 'idled', 'description': f'{agent.name} cannot upgrade camp'}
+    next_tier = colony.tier + 1
+    cost = config.UPGRADE_TIER_COSTS[next_tier]
+    colony.wood_stock -= cost['wood']
+    colony.stone_stock -= cost['stone']
+    colony.tier = next_tier
+    agent.state = STATE_DEPOSITING
+    return {
+        'type': 'upgraded_camp',
+        'description': f'{colony.name} upgraded to tier {next_tier}',
+        'data': {
+            'colony_id': colony.id,
+            'tier': next_tier,
+            'wood_spent': cost['wood'],
+            'stone_spent': cost['stone'],
+        },
+    }
+
+
 def deposit_cargo(agent, colony):
     """Drop the agent's foraged pouch into the colony's shared stock.
 

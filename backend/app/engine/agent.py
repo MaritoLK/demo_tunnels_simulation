@@ -94,12 +94,13 @@ def decide_action(agent, world, colony, phase) -> Decision:
     Priority ladder (first match wins):
       1. Survival (health / hunger / energy crits).
       2. Night → rest_outdoors in place.
-      3. At-camp opportunistic (deposit / eat / socialise).
+      3. At-camp opportunistic (deposit / eat / upgrade / socialise).
       4. Social-low off-camp → step_to_camp.
       5. Cargo-full off-camp → step_to_camp.
       6. Harvest own tile.
       6b. Step toward known mature crop.
       7. Opportunistic forage (food adjacent + pouch room).
+      7b. Own-tile wood / stone gather.
       8. Plant own tile.
       9. Rogue eat-from-pouch.
      10. Tail (forage / explore).
@@ -149,6 +150,15 @@ def decide_action(agent, world, colony, phase) -> Decision:
                 and colony.food_stock >= config.EAT_COST
                 and not agent.ate_this_dawn):
             return Decision('eat_camp', 'dawn at camp → eat stock')
+        # Camp tier upgrade — agent at home with the colony having
+        # banked enough wood + stone to reach the next tier. Sits
+        # before socialise so an idle 'visiting' agent prefers
+        # productive infrastructure work over chatting.
+        if actions.can_upgrade(colony):
+            return Decision(
+                'upgrade_camp',
+                f'at camp, can afford tier {colony.tier + 1} → upgrade',
+            )
         if agent.social < needs.SOCIAL_LOW:
             return Decision('socialise', f'at camp, social < {sl} → socialise')
 
@@ -187,6 +197,16 @@ def decide_action(agent, world, colony, phase) -> Decision:
     # explore".
     if agent.cargo < needs.CARRY_MAX and actions.adjacent_food_tile(agent, world) is not None:
         return Decision('forage', 'food in reach → forage on sight')
+
+    # 7b. Own-tile wood / stone gather. Triggers when the agent
+    # happens to be standing on a forest or stone tile during their
+    # explore route. Direct-to-stock (no per-agent transport) so the
+    # rung is just 'harvest underfoot'. Outranks plant — wood/stone
+    # is an immediate gain, plant is a multi-tick investment.
+    if tile.resource_type == 'wood' and tile.resource_amount > 0:
+        return Decision('gather_wood', 'wood underfoot → gather')
+    if tile.resource_type == 'stone' and tile.resource_amount > 0:
+        return Decision('gather_stone', 'stone underfoot → gather')
 
     # 8. Plant: empty tile + free field slot + within camp's field radius
     # → start a crop. The full gate lives in actions.is_plantable so the
@@ -236,6 +256,12 @@ def execute_action(action_name, agent, world, all_agents, colony, *, rng):
         return actions.eat_cargo(agent)
     if action_name == 'deposit':
         return actions.deposit_cargo(agent, colony)
+    if action_name == 'gather_wood':
+        return actions.gather_wood(agent, world, colony)
+    if action_name == 'gather_stone':
+        return actions.gather_stone(agent, world, colony)
+    if action_name == 'upgrade_camp':
+        return actions.upgrade_camp(agent, colony)
     if action_name == 'step_to_camp':
         moved = actions.step_toward(agent, colony.camp_x, colony.camp_y, world)
         if moved:

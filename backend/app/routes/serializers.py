@@ -61,6 +61,9 @@ def colony_to_dict(colony):
     return {
         'id': colony.id,
         'name': colony.name,
+        'wood_stock': colony.wood_stock,
+        'stone_stock': colony.stone_stock,
+        'tier': colony.tier,
         'color': colony.color,
         'camp_x': colony.camp_x,
         'camp_y': colony.camp_y,

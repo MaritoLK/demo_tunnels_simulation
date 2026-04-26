@@ -281,11 +281,11 @@ class Simulation:
             colony = self.colonies.get(agent.colony_id)
             if colony is None:
                 continue
-            # Per-agent reveal radius scales with their walk-skill
-            # tier — veteran scouts uncover a wider area than fresh
-            # spawns. Apprentice = 3x3, journeyman = 5x5, veteran =
-            # 7x7 (see engine.skill).
-            radius = skill.reveal_radius_for(agent.tiles_walked)
+            # Per-agent reveal radius: walk-skill tier (veteran scouts
+            # uncover a wider area) PLUS the colony's camp tier. Each
+            # camp tier adds +1 to the radius — explicit colony-level
+            # progression as a payoff for upgrading.
+            radius = skill.reveal_radius_for(agent.tiles_walked) + colony.tier
             ax, ay = agent.x, agent.y
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):

@@ -152,6 +152,9 @@ def colony_to_row(c):
         camp_y=c.camp_y,
         food_stock=c.food_stock,
         sprite_palette=c.sprite_palette,
+        wood_stock=c.wood_stock,
+        stone_stock=c.stone_stock,
+        tier=c.tier,
     )
 
 
@@ -165,11 +168,19 @@ def row_to_colony(row):
         camp_y=row.camp_y,
         food_stock=row.food_stock,
         sprite_palette=row.sprite_palette,
+        wood_stock=row.wood_stock,
+        stone_stock=row.stone_stock,
+        tier=row.tier,
     )
 
 
 def update_colony_row(row, engine_colony):
     """Copy mutable per-tick fields from engine colony onto its ORM row.
-    Only food_stock changes during simulation; all other fields are immutable post-creation.
+    food_stock / wood_stock / stone_stock fluctuate every tick (gather +
+    deposit + harvest + spend); tier ticks up via upgrade_camp. Other
+    fields are immutable post-creation.
     """
     row.food_stock = engine_colony.food_stock
+    row.wood_stock = engine_colony.wood_stock
+    row.stone_stock = engine_colony.stone_stock
+    row.tier = engine_colony.tier

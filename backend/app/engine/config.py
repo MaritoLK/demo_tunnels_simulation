@@ -59,3 +59,22 @@ MAX_AGENTS_PER_COLONY = 12
 # duration of a long demo before timing out. Tunable: shorter for more
 # generational churn, longer for stable populations.
 MAX_AGE_TICKS = 1800
+
+# Wood / stone gather amount per `gather_wood` / `gather_stone` action.
+# Tile resource drops by this much, colony stock bumps by this much.
+# Keep small so a single tile takes several ticks to drain — feels
+# like sustained labour rather than instant strip-mining.
+GATHER_WOOD_AMOUNT = 1.0
+GATHER_STONE_AMOUNT = 1.0
+
+# Camp tier upgrades. Each list entry is a tier; index into it via
+# colony.tier. costs[tier] = the wood/stone the colony must spend to
+# REACH that tier (so costs[0] is the freebie founder tier). Tier
+# tracking + sprite swap on the frontend gives a visible 'this colony
+# is doing well' signal during the demo.
+UPGRADE_TIER_COSTS = (
+    {'wood': 0,  'stone': 0},
+    {'wood': 15, 'stone': 8},
+    {'wood': 40, 'stone': 25},
+)
+MAX_COLONY_TIER = len(UPGRADE_TIER_COSTS) - 1

@@ -55,12 +55,22 @@ import yellowIdleMeatUrl from '../assets/tiny-swords/free/Units/Yellow Units/Paw
 import yellowRunMeatUrl  from '../assets/tiny-swords/free/Units/Yellow Units/Pawn/Pawn_Run Meat.png';
 // House sprites — 128×192 static per colony palette. Keyed by the
 // backend colony name (Red / Blue / Purple / Yellow — see
-// DEFAULT_COLONY_PALETTE in simulation_service.py). Drawn over the
-// camp tile to give each colony a visible home.
-import houseRedUrl from '../assets/tiny-swords/free/Buildings/Red Buildings/House1.png';
-import houseBlueUrl from '../assets/tiny-swords/free/Buildings/Blue Buildings/House1.png';
-import housePurpleUrl from '../assets/tiny-swords/free/Buildings/Purple Buildings/House1.png';
-import houseYellowUrl from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House1.png';
+// DEFAULT_COLONY_PALETTE in simulation_service.py). Three tiers per
+// palette: House1 = founders' shack (tier 0), House2 = upgraded
+// (tier 1), House3 = stately (tier 2). Indexed by colony.tier in
+// the renderer.
+import houseRedT0Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House1.png';
+import houseRedT1Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House2.png';
+import houseRedT2Url from '../assets/tiny-swords/free/Buildings/Red Buildings/House3.png';
+import houseBlueT0Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House1.png';
+import houseBlueT1Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House2.png';
+import houseBlueT2Url from '../assets/tiny-swords/free/Buildings/Blue Buildings/House3.png';
+import housePurpleT0Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House1.png';
+import housePurpleT1Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House2.png';
+import housePurpleT2Url from '../assets/tiny-swords/free/Buildings/Purple Buildings/House3.png';
+import houseYellowT0Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House1.png';
+import houseYellowT1Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House2.png';
+import houseYellowT2Url from '../assets/tiny-swords/free/Buildings/Yellow Buildings/House3.png';
 
 export type PawnVariant = 'idle' | 'run' | 'idleMeat' | 'runMeat';
 export type ColonyPalette = 'Red' | 'Blue' | 'Purple' | 'Yellow';
@@ -78,8 +88,13 @@ export interface SpriteAtlas {
   // points at Blue idle so behavior is unchanged.
   pawn: HTMLImageElement;
   pawns: Record<ColonyPalette, Record<PawnVariant, HTMLImageElement>>;
-  houses: Record<string, HTMLImageElement>;
+  // Per-palette house sprites indexed by tier. houses[name][tier] is
+  // the rendered building for `colony.tier`. Three tiers today (0..2);
+  // out-of-range tiers should clamp to MAX_TIER on the renderer side.
+  houses: Record<string, HTMLImageElement[]>;
 }
+
+export const MAX_HOUSE_TIER = 2;
 
 // Source-image tile size. Distinct from the rendered tilePx — the
 // renderer scales source 64s up to whatever zoom the camera uses.
@@ -143,10 +158,17 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     return { idle, run, idleMeat, runMeat };
   };
 
+  const loadHouseTriplet = async (
+    urls: [string, string, string],
+  ): Promise<HTMLImageElement[]> => {
+    const [t0, t1, t2] = await Promise.all(urls.map(loadImage));
+    return [t0, t1, t2];
+  };
+
   const [
     tilemap, water, meat, bush, cropGrowing, cropMature, rock,
     redPawns, bluePawns, purplePawns, yellowPawns,
-    houseRed, houseBlue, housePurple, houseYellow,
+    redHouses, blueHouses, purpleHouses, yellowHouses,
   ] = await Promise.all([
     loadImage(tilemapUrl),
     loadImage(waterUrl),
@@ -159,10 +181,10 @@ export async function loadSprites(): Promise<SpriteAtlas> {
     loadPair({ idle: blueIdleUrl,   run: blueRunUrl,   idleMeat: blueIdleMeatUrl,   runMeat: blueRunMeatUrl }),
     loadPair({ idle: purpleIdleUrl, run: purpleRunUrl, idleMeat: purpleIdleMeatUrl, runMeat: purpleRunMeatUrl }),
     loadPair({ idle: yellowIdleUrl, run: yellowRunUrl, idleMeat: yellowIdleMeatUrl, runMeat: yellowRunMeatUrl }),
-    loadImage(houseRedUrl),
-    loadImage(houseBlueUrl),
-    loadImage(housePurpleUrl),
-    loadImage(houseYellowUrl),
+    loadHouseTriplet([houseRedT0Url, houseRedT1Url, houseRedT2Url]),
+    loadHouseTriplet([houseBlueT0Url, houseBlueT1Url, houseBlueT2Url]),
+    loadHouseTriplet([housePurpleT0Url, housePurpleT1Url, housePurpleT2Url]),
+    loadHouseTriplet([houseYellowT0Url, houseYellowT1Url, houseYellowT2Url]),
   ]);
 
   return {
@@ -176,10 +198,10 @@ export async function loadSprites(): Promise<SpriteAtlas> {
       Yellow: yellowPawns,
     },
     houses: {
-      Red: houseRed,
-      Blue: houseBlue,
-      Purple: housePurple,
-      Yellow: houseYellow,
+      Red: redHouses,
+      Blue: blueHouses,
+      Purple: purpleHouses,
+      Yellow: yellowHouses,
     },
   };
 }

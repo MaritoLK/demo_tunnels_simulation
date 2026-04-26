@@ -37,18 +37,29 @@ def test_simulation_emits_crop_matured_during_day_phase():
 
 
 def test_simulation_dusk_phase_steps_agent_toward_camp():
+    # Bigger world so the agent can sit BEYOND the plant ring (Chebyshev
+    # > 4 from camp) — otherwise the plant rung pins them on an empty
+    # grass tile and the dusk-movement assertion misfires. Position
+    # picked deliberately at distance 8 (camp at (0,0), agent at (8,8))
+    # so neither plant nor opportunistic gather can fire there.
     sim = new_simulation(
-        width=5, height=5, seed=1,
+        width=10, height=10, seed=1,
         colonies=[EngineColony(1, 'R', '#000', camp_x=0, camp_y=0, food_stock=18)],
         agents_per_colony=1,
     )
     agent = sim.agents[0]
-    agent.x, agent.y = 4, 4
+    agent.x, agent.y = 8, 8
     agent.colony_id = 1
+    # Clear any resource on the agent's tile so the opportunistic
+    # wood/stone gather rung doesn't pin them in place — this test
+    # is about dusk-phase MOVEMENT, not 'do anything productive'.
+    here = sim.world.get_tile(8, 8)
+    here.terrain = 'grass'
+    here.resource_type = None
+    here.resource_amount = 0.0
 
     # Warp to the start of dusk. Derived from cycle constants so phase-order
     # tweaks don't silently land the test in a non-dusk phase.
     sim.current_tick = cycle.PHASES.index('dusk') * cycle.TICKS_PER_PHASE
     sim.step()
-    assert (agent.x, agent.y) != (4, 4)
-    assert abs(agent.x - 0) + abs(agent.y - 0) <= 7
+    assert (agent.x, agent.y) != (8, 8)

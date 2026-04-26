@@ -74,6 +74,15 @@ export interface Colony {
   camp_y: number;
   food_stock: number;
   growing_count: number;
+  // Wood / stone stockpiles — what camp-tier upgrades cost. Optional
+  // for older snapshots during a rolling deploy; renderer treats
+  // missing as 0.
+  wood_stock?: number;
+  stone_stock?: number;
+  // Camp tier (0/1/2). Drives the house sprite swap and the per-agent
+  // fog reveal radius bonus. Optional for back-compat — undefined
+  // reads as 0.
+  tier?: number;
   // Sprite-asset key — decouples agent sprite selection from colony.name
   // so a future colony rename doesn't lose its visual identity.
   // Wire values today: 'Red' | 'Blue' | 'Purple' | 'Yellow' (open union).

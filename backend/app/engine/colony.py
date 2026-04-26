@@ -11,10 +11,12 @@ deltas via dirty-colony set after the step returns.
 class EngineColony:
     __slots__ = ('id', 'name', 'color', 'camp_x', 'camp_y',
                  'food_stock', 'growing_count', 'sprite_palette',
-                 'explored', 'last_reproduction_tick', 'agent_name_counter')
+                 'explored', 'last_reproduction_tick', 'agent_name_counter',
+                 'wood_stock', 'stone_stock', 'tier')
 
     def __init__(self, id, name, color, camp_x, camp_y,
-                 food_stock, growing_count=0, sprite_palette='Blue'):
+                 food_stock, growing_count=0, sprite_palette='Blue',
+                 wood_stock=0, stone_stock=0, tier=0):
         self.id = id
         self.name = name
         self.color = color
@@ -23,6 +25,17 @@ class EngineColony:
         self.food_stock = food_stock
         self.growing_count = growing_count
         self.sprite_palette = sprite_palette
+        # Wood / stone stockpiles. Forest tiles drop wood, stone tiles
+        # drop stone — both via the gather_wood / gather_stone actions
+        # which deposit straight to the colony stock (no per-agent
+        # cargo transport for the demo: agents act as lumberjacks /
+        # miners delivering directly home). Spent on camp tier upgrades.
+        self.wood_stock = wood_stock
+        self.stone_stock = stone_stock
+        # Camp tier: 0 = founders' shack, increments via upgrade_camp.
+        # Each tier swaps the house sprite (House1 → House2 → House3)
+        # and bumps the per-agent fog reveal radius by +tier.
+        self.tier = tier
         # Cumulative set of (x, y) tiles this colony has revealed.
         # Refilled per tick from each non-rogue agent's reveal radius.
         # In-memory only — demo restarts naturally re-fog the map.

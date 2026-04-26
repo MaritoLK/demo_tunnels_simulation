@@ -16,7 +16,10 @@ export function ColonyPanel({ colonies }: { colonies: Colony[] }) {
             aria-hidden
           />
           <span className="colony-row__name">{c.name}</span>
-          <span className="colony-row__stat">food {c.food_stock}</span>
+          <span className="colony-row__stat">tier {c.tier ?? 0}</span>
+          <span className="colony-row__stat">food {Math.floor(c.food_stock)}</span>
+          <span className="colony-row__stat">wood {Math.floor(c.wood_stock ?? 0)}</span>
+          <span className="colony-row__stat">stone {Math.floor(c.stone_stock ?? 0)}</span>
           <span className="colony-row__stat">fields {c.growing_count}</span>
         </div>
       ))}
